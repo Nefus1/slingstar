@@ -14,7 +14,7 @@ export const Route = createRootRoute({
       { name: "theme-color", content: "#070809" },
       {
         name: "description",
-        content: "Fling planets and watch them orbit, slingshot, and collide.",
+        content: "Forge galaxies in a gravity sandbox or defend Asteria with moving orbital towers.",
       },
     ],
     links: [
