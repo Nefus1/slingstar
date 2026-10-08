@@ -10,6 +10,7 @@ import {
 type BodySnapshot = Omit<Body, "trail">;
 
 export type WorldSnapshot = {
+  encounter: World["encounter"];
   stormWave: number;
   nextEncounterAt: number;
   time: number;
@@ -28,6 +29,7 @@ export type WorldSnapshot = {
 
 export function captureSnapshot(world: World): WorldSnapshot {
   return {
+    encounter: structuredClone(world.encounter),
     stormWave: world.stormWave,
     nextEncounterAt: world.nextEncounterAt,
     time: world.time,
@@ -49,6 +51,7 @@ export function captureSnapshot(world: World): WorldSnapshot {
 }
 
 export function restoreSnapshot(world: World, snapshot: WorldSnapshot) {
+  world.encounter = structuredClone(snapshot.encounter);
   world.stormWave = snapshot.stormWave;
   world.nextEncounterAt = snapshot.nextEncounterAt;
   world.time = snapshot.time;

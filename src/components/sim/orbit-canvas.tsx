@@ -12,6 +12,8 @@ import {
   FIXED_DT,
   lerpBody,
   predictPath,
+  orbitalVelocity,
+  spawnEncounter,
   radiusFor,
   recordTimeline,
   spawnGravityWell,
@@ -43,6 +45,7 @@ import { decodeExperiment, encodeExperiment } from "@/lib/sim/sharing";
 import {
   MASS_PRESETS,
   type Body,
+  type EncounterKind,
   type MassId,
   type ExperimentAction,
   type SceneId,
@@ -50,6 +53,7 @@ import {
 } from "@/lib/sim/types";
 
 export type SimApi = {
+  encounter: (kind: EncounterKind) => void;
   clear: () => void;
   loadScene: (id: SceneId, seed?: string) => void;
   startContract: (id: ContractId) => void;
@@ -216,6 +220,7 @@ export function OrbitCanvas({ apiRef }: { apiRef: MutableRefObject<SimApi | null
   function syncTelemetry(world: World) {
     const oldest = snapshotsRef.current[0];
     useSimUi.getState().syncWorld({
+      encounter: structuredClone(world.encounter),
       bodyCount: world.bodies.length,
       worldTime: world.time,
       seed: world.seed,
@@ -260,7 +265,7 @@ export function OrbitCanvas({ apiRef }: { apiRef: MutableRefObject<SimApi | null
     const next = sceneFocus(world);
     const canvas = canvasRef.current;
     if (canvas) {
-      const top = canvas.clientWidth < 640 ? 164 : 112;
+      const top = canvas.clientWidth < 640 ? 128 : 112;
       const controlsTop =
         document.querySelector(".sandbox-controls")?.getBoundingClientRect().top ??
         canvas.clientHeight - 300;
@@ -323,6 +328,8 @@ export function OrbitCanvas({ apiRef }: { apiRef: MutableRefObject<SimApi | null
         }
         useSimUi.getState().recordLaunch(pset.kind);
       }
+    } else if (action.type === "encounter") {
+      spawnEncounter(world, action.kind);
     } else if (action.type === "wormhole") {
       spawnWormhole(world, action.ax, action.ay, action.bx, action.by);
     } else if (action.type === "nova") {
@@ -523,6 +530,19 @@ export function OrbitCanvas({ apiRef }: { apiRef: MutableRefObject<SimApi | null
     }
 
     const api: SimApi = {
+      encounter(kind) {
+        if (!spawnEncounter(world, kind)) {
+          useSimUi
+            .getState()
+            .announce(
+              "Encounter unavailable",
+              "Finish the current encounter or make room for visitors.",
+            );
+          return;
+        }
+        world.actions.push({ type: "encounter", t: world.time, kind });
+        syncTelemetry(world);
+      },
       clear() {
         clearWorld(world);
         currentSceneRef.current = "empty";
@@ -943,6 +963,25 @@ export function OrbitCanvas({ apiRef }: { apiRef: MutableRefObject<SimApi | null
           ctx.fillText(label, p.x, p.y + body.radius + 17 / cam.scale);
         }
       }
+      if (world.encounter) {
+        ctx.font = `${12 / cam.scale}px sans-serif`;
+        ctx.textAlign = "center";
+        for (const body of world.bodies) {
+          if (!world.encounter.visitorIds.includes(body.id)) continue;
+          const p = lerpBody(body, alpha);
+          const radius = Math.max(body.radius, 4 / cam.scale) + 5 / cam.scale;
+          ctx.strokeStyle = body.color;
+          ctx.globalAlpha = 0.6;
+          ctx.lineWidth = 1 / cam.scale;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = "#d3d8de";
+          // Closely spaced comet names would cover each other at the wide view.
+          if (body.style !== "comet") ctx.fillText(body.name, p.x, p.y - radius - 7 / cam.scale);
+        }
+      }
       drawBursts(ctx, world);
 
       if (hoverRef.current && modeRef.current === "none" && ui.instrument !== "launch") {
@@ -1042,11 +1081,17 @@ export function OrbitCanvas({ apiRef }: { apiRef: MutableRefObject<SimApi | null
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.type === "keyup") {
         keysRef.current.delete(e.code);
         return;
       }
+      if (
+        e.target instanceof Element &&
+        e.target.closest(
+          "button, a, input, textarea, select, [role='dialog'], [contenteditable='true']",
+        )
+      )
+        return;
       keysRef.current.add(e.code);
       const ui = useSimUi.getState();
       unlockAudio();
@@ -1108,6 +1153,16 @@ export function OrbitCanvas({ apiRef }: { apiRef: MutableRefObject<SimApi | null
 
   function updatePredict(wx: number, wy: number, vx: number, vy: number) {
     const pset = preset();
+    if (
+      useSimUi.getState().orbitAssist &&
+      (Math.hypot(vx, vy) / THROW_SCALE) * camRef.current.scale < 6
+    ) {
+      const assisted = orbitalVelocity(worldRef.current, wx, wy, pset.mass);
+      if (assisted) {
+        vx = assisted.vx;
+        vy = assisted.vy;
+      }
+    }
     const spec = {
       x: wx,
       y: wy,
@@ -1272,9 +1327,24 @@ export function OrbitCanvas({ apiRef }: { apiRef: MutableRefObject<SimApi | null
       const pset = preset();
       const dx = end.x - start.x;
       const dy = end.y - start.y;
-      const vx = dx * THROW_SCALE;
-      const vy = dy * THROW_SCALE;
       const world = worldRef.current;
+      const wantsAssist =
+        useSimUi.getState().orbitAssist && Math.hypot(dx, dy) * camRef.current.scale < 6;
+      const assisted = wantsAssist ? orbitalVelocity(world, start.x, start.y, pset.mass) : null;
+      if (wantsAssist && !assisted) {
+        useSimUi
+          .getState()
+          .announce(
+            "Choose orbital space",
+            "Tap farther from an existing anchor, or drag to launch manually.",
+          );
+        modeRef.current = "none";
+        flingRef.current = null;
+        pathRef.current = null;
+        return;
+      }
+      const vx = assisted?.vx ?? dx * THROW_SCALE;
+      const vy = assisted?.vy ?? dy * THROW_SCALE;
       const host = dominantHost(world);
       const body = addBody(world, {
         x: start.x,

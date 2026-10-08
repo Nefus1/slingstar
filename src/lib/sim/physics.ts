@@ -1,6 +1,7 @@
 import { TRAIL_CAP, type Body, type BodyKind, type BodyStyle, type World } from "./types";
 import { bodyName, hashSeed, nextRandom } from "./rng";
-import type { TimelineEventType } from "./types";
+import { ENCOUNTERS } from "./encounters";
+import type { EncounterKind, TimelineEventType } from "./types";
 
 export type { World } from "./types";
 
@@ -62,6 +63,7 @@ function mergeKind(a: Body, b: Body): BodyKind {
 export function createWorld(seed = "HELIOS-17"): World {
   return {
     scene: "empty",
+    encounter: null,
     stormWave: 0,
     nextEncounterAt: 18,
     bodies: [],
@@ -159,6 +161,7 @@ export function addBody(
 
 export function clearWorld(world: World) {
   world.scene = "empty";
+  world.encounter = null;
   world.stormWave = 0;
   world.nextEncounterAt = 18;
   world.bodies.length = 0;
@@ -681,6 +684,7 @@ export function stepWorld(world: World, dt: number, record = true) {
     world.time += dt;
     tickPhenomena(world, dt);
     tickFx(world, dt);
+    updateEncounter(world);
     return;
   }
   world.time += dt;
@@ -701,6 +705,103 @@ export function stepWorld(world: World, dt: number, record = true) {
   }
   cullFar(world);
   tickFx(world, dt);
+  updateEncounter(world);
+}
+
+/** Circular launch velocity in the same softened gravity field as the integrator. */
+export function orbitalVelocity(world: World, x: number, y: number, mass = 0) {
+  const host = world.bodies.reduce<Body | null>(
+    (largest, body) => (!largest || body.mass > largest.mass ? body : largest),
+    null,
+  );
+  if (!host) return null;
+  const dx = x - host.x,
+    dy = y - host.y;
+  const distance = Math.hypot(dx, dy);
+  if (distance < host.radius + radiusFor(mass, "rock") + 8) return null;
+  const softened = distance * distance + world.softening * world.softening;
+  const speed = Math.sqrt(
+    (world.G * (host.mass + mass) * distance * distance) / Math.pow(softened, 1.5),
+  );
+  return { vx: host.vx - (dy / distance) * speed, vy: host.vy + (dx / distance) * speed };
+}
+
+/** Visitors are seeded and recorded as actions, so sharing and rewinding reproduce them. */
+export function spawnEncounter(world: World, kind: EncounterKind): boolean {
+  const event = ENCOUNTERS.find((item) => item.id === kind);
+  const count = kind === "comets" ? 5 : 1;
+  if (
+    !event ||
+    !world.bodies.length ||
+    world.encounter?.status === "active" ||
+    world.bodies.length + count > MAX_BODIES
+  )
+    return false;
+  const host = world.bodies.reduce((largest, body) => (body.mass > largest.mass ? body : largest));
+  const protectedIds = world.bodies.map((body) => body.id);
+  const extent = Math.max(
+    320,
+    ...world.bodies.map((body) => Math.hypot(body.x - host.x, body.y - host.y)),
+  );
+  const distance = Math.min(1800, extent * 1.3);
+  const angle = nextRandom(world) * Math.PI * 2;
+  const radialX = Math.cos(angle),
+    radialY = Math.sin(angle);
+  const tangentX = -radialY,
+    tangentY = radialX;
+  const impact = extent * (kind === "stellar" ? 0.85 : kind === "rogue" ? 0.4 : 0.2);
+  const speed = Math.max(60, Math.sqrt((world.G * host.mass) / distance) * 1.65);
+  const visitorIds: number[] = [];
+  for (let i = 0; i < count; i++) {
+    const offset = impact + (i - (count - 1) / 2) * 25;
+    const mass =
+      kind === "stellar"
+        ? host.mass * 0.35
+        : kind === "rogue"
+          ? host.mass * 0.015
+          : world.scene === "milkyway"
+            ? 1e-7
+            : 3 + nextRandom(world) * 3;
+    const body = addBody(world, {
+      x: host.x + radialX * (distance + i * 48) + tangentX * offset,
+      y: host.y + radialY * (distance + i * 48) + tangentY * offset,
+      vx: host.vx - radialX * speed,
+      vy: host.vy - radialY * speed,
+      mass,
+      kind: kind === "stellar" ? "star" : "rock",
+      style: kind === "stellar" ? "star" : kind === "rogue" ? "gas" : "comet",
+      color: kind === "stellar" ? "#f0e2b6" : kind === "rogue" ? "#7e96b2" : "#b9ddec",
+      name: kind === "comets" ? `Visitor ${i + 1}` : kind === "rogue" ? "Wanderer" : "Passing sun",
+    });
+    if (body) {
+      if (kind === "rogue") body.radius = Math.max(body.radius, 9);
+      body.distinctions.push(event.label);
+      visitorIds.push(body.id);
+    }
+  }
+  world.encounter = {
+    kind,
+    startedAt: world.time,
+    endsAt: world.time + event.duration,
+    protectedIds,
+    visitorIds,
+    status: "active",
+  };
+  recordTimeline(world, "scene", `${event.label} incoming`, event.description, visitorIds);
+  return true;
+}
+
+function updateEncounter(world: World) {
+  const encounter = world.encounter;
+  if (!encounter || encounter.status !== "active" || world.time < encounter.endsAt) return;
+  const intact = encounter.protectedIds.every((id) => world.bodies.some((body) => body.id === id));
+  encounter.status = intact ? "intact" : "changed";
+  recordTimeline(
+    world,
+    "scene",
+    intact ? "System preserved" : "Encounter reshaped the system",
+    `${ENCOUNTERS.find((event) => event.id === encounter.kind)?.label} complete. ${intact ? "Every original body survived." : "Try rewinding and redirecting the visitor."}`,
+  );
 }
 
 function tickEncounters(world: World) {
