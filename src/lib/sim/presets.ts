@@ -12,6 +12,89 @@ import {
 import { createRng, randomSeed } from "./rng";
 import type { BodyStyle, GalaxyStar, SceneId } from "./types";
 
+export const SOLAR_PLANETS: {
+  name: string;
+  distance: number;
+  massRatio: number;
+  radius: number;
+  color: string;
+  phase: number;
+  style: BodyStyle;
+}[] = [
+  {
+    name: "Mercury",
+    distance: 92,
+    massRatio: 1.66e-7,
+    radius: 4,
+    color: "#a49b91",
+    phase: 0.06,
+    style: "moon",
+  },
+  {
+    name: "Venus",
+    distance: 130,
+    massRatio: 2.45e-6,
+    radius: 6,
+    color: "#d8b276",
+    phase: 0.38,
+    style: "desert",
+  },
+  {
+    name: "Earth",
+    distance: 170,
+    massRatio: 3.003e-6,
+    radius: 6.5,
+    color: "#3984a8",
+    phase: 0.72,
+    style: "ocean",
+  },
+  {
+    name: "Mars",
+    distance: 220,
+    massRatio: 3.23e-7,
+    radius: 5,
+    color: "#c17a5a",
+    phase: 0.17,
+    style: "terrestrial",
+  },
+  {
+    name: "Jupiter",
+    distance: 340,
+    massRatio: 9.545e-4,
+    radius: 16,
+    color: "#c6a07d",
+    phase: 0.54,
+    style: "gas",
+  },
+  {
+    name: "Saturn",
+    distance: 460,
+    massRatio: 2.858e-4,
+    radius: 14,
+    color: "#c1aa78",
+    phase: 0.89,
+    style: "ringed",
+  },
+  {
+    name: "Uranus",
+    distance: 590,
+    massRatio: 4.366e-5,
+    radius: 10,
+    color: "#9fc5d5",
+    phase: 0.3,
+    style: "ice",
+  },
+  {
+    name: "Neptune",
+    distance: 710,
+    massRatio: 5.151e-5,
+    radius: 10,
+    color: "#5078bb",
+    phase: 0.65,
+    style: "gas",
+  },
+];
+
 const C = {
   star: "#f0e2b6",
   starB: "#e8d4a4",
@@ -29,11 +112,20 @@ const C = {
 
 export function loadScene(world: World, id: SceneId, seed?: string) {
   clearWorld(world);
-  setWorldSeed(world, seed ?? (id === "remix" || id === "galaxy" ? randomSeed() : `APSIS-${id.toUpperCase()}`));
+  world.scene = id;
+  setWorldSeed(
+    world,
+    seed ?? (id === "remix" || id === "galaxy" ? randomSeed() : `APSIS-${id.toUpperCase()}`),
+  );
   world.G = DEFAULT_G;
   world.softening = 18;
   const rng = createRng(`${world.seed}:scene`);
-  recordTimeline(world, "scene", `${sceneLabel(id)} field loaded`, `Experiment seed ${world.seed}.`);
+  recordTimeline(
+    world,
+    "scene",
+    `${sceneLabel(id)} field loaded`,
+    `Experiment seed ${world.seed}.`,
+  );
 
   if (id === "empty") return;
 
@@ -204,6 +296,23 @@ export function loadScene(world: World, id: SceneId, seed?: string) {
       style: "blackHole",
       name: "Forgeheart",
     });
+    const core = world.bodies[0]!;
+    for (let i = 0; i < 12; i++) {
+      const star = placeCircular(
+        world,
+        core,
+        165 + i * 38,
+        35 + (i % 4) * 12,
+        i % 2 ? C.starB : C.ice,
+        i * 0.381,
+        false,
+        "star",
+        `Cluster ${i + 1}`,
+      )!;
+      star.kind = "star";
+      star.radius = 8 + (i % 3) * 2;
+    }
+    zeroMomentumAndCenter(world.bodies);
     recordTimeline(
       world,
       "scene",
@@ -214,22 +323,38 @@ export function loadScene(world: World, id: SceneId, seed?: string) {
   }
 
   if (id === "milkyway") {
-    world.softening = 26;
-    world.galaxy = makeGalaxy("milkyWay", rng);
-    addBody(world, {
+    // Real planet-to-Sun mass ratios. Orbit distances are compressed for play.
+    world.softening = 1.2;
+    const sun = addBody(world, {
       x: 0,
       y: 0,
-      mass: 26000,
-      color: "#e3c19a",
-      kind: "smbh",
-      style: "blackHole",
-      name: "Sagittarius A*",
-    });
+      mass: 560,
+      color: C.star,
+      kind: "star",
+      style: "star",
+      name: "Sun",
+    })!;
+    for (const planet of SOLAR_PLANETS) {
+      const body = placeCircular(
+        world,
+        sun,
+        planet.distance,
+        sun.mass * planet.massRatio,
+        planet.color,
+        planet.phase,
+        false,
+        planet.style,
+        planet.name,
+      )!;
+      body.radius = planet.radius;
+      body.distinctions.push("Solar System planet");
+    }
+    zeroMomentumAndCenter(world.bodies);
     recordTimeline(
       world,
       "scene",
-      "Milky Way reconstruction online",
-      "The galactic bar, four principal arms, Orion Spur, and Sol marker are mapped.",
+      "Solar System ready",
+      "Sun and all eight planets use n-body gravity and real mass ratios; distances and sizes are scaled for play.",
     );
     return;
   }
@@ -279,7 +404,12 @@ export function loadScene(world: World, id: SceneId, seed?: string) {
       );
     }
     zeroMomentumAndCenter(world.bodies);
-    recordTimeline(world, "scene", "Accretion disk seeded", "Collisions can now grow the three planetary embryos.");
+    recordTimeline(
+      world,
+      "scene",
+      "Accretion disk seeded",
+      "Collisions can now grow the three planetary embryos.",
+    );
     return;
   }
 
@@ -296,8 +426,8 @@ export function loadScene(world: World, id: SceneId, seed?: string) {
     placeCircular(world, star, 142, 22, C.desert, 0.08, false, "desert", "Sahra");
     placeCircular(world, star, 238, 27, C.ocean, 0.42, false, "ocean", "Pelagos");
     placeCircular(world, star, 348, 84, C.ringed, 0.7, false, "ringed", "Crown");
-    for (let i = 0; i < 21; i++) {
-      const angle = (i / 21) * Math.PI * 2 + (rng() - 0.5) * 0.18;
+    for (let i = 0; i < 9; i++) {
+      const angle = (i / 9) * Math.PI * 2 + (rng() - 0.5) * 0.18;
       const dist = 570 + rng() * 180;
       const x = Math.cos(angle) * dist;
       const y = Math.sin(angle) * dist;
@@ -321,7 +451,12 @@ export function loadScene(world: World, id: SceneId, seed?: string) {
       });
     }
     zeroMomentumAndCenter(world.bodies);
-    recordTimeline(world, "scene", "Comet storm inbound", "Fourteen icy visitors and seven asteroids are converging on the inner system.");
+    recordTimeline(
+      world,
+      "scene",
+      "Comet storm inbound",
+      "Nine visitors are converging on the inner system. Stronger waves arrive every 18 simulated seconds.",
+    );
     return;
   }
 
@@ -340,7 +475,12 @@ export function loadScene(world: World, id: SceneId, seed?: string) {
     placeCircular(world, gargantua, 410, 7, "#b9c1c6", 0.62, true, "asteroid", "Endurance");
     placeCircular(world, gargantua, 520, 20, C.frost, 0.82, false, "ice", "Mann");
     zeroMomentumAndCenter(world.bodies);
-    recordTimeline(world, "scene", "Gargantua acquired", "A cinematic photon ring and lensed accretion disk dominate the field.");
+    recordTimeline(
+      world,
+      "scene",
+      "Gargantua acquired",
+      "A cinematic photon ring and lensed accretion disk dominate the field.",
+    );
     return;
   }
 
@@ -382,7 +522,7 @@ function sceneLabel(id: SceneId) {
           ? "Comet Storm"
           : id === "accretion"
             ? "Planet Forge"
-      : id.charAt(0).toUpperCase() + id.slice(1);
+            : id.charAt(0).toUpperCase() + id.slice(1);
 }
 
 function makeGalaxy(kind: "forge" | "milkyWay", rng: () => number) {
@@ -447,9 +587,7 @@ function makeGalaxy(kind: "forge" | "milkyWay", rng: () => number) {
           { x: 365, y: 118, title: "Sol", detail: "Orion Spur · you are here", accent: "#f4e7b9" },
           { x: -405, y: -220, title: "Perseus Arm", detail: "Outer spiral arm" },
         ]
-      : [
-          { x: 0, y: 0, title: "Forgeheart", detail: "Central attractor", accent: "#e0b58a" },
-        ],
+      : [{ x: 0, y: 0, title: "Forgeheart", detail: "Central attractor", accent: "#e0b58a" }],
   };
 }
 

@@ -20,7 +20,7 @@ import {
   stepWorld,
   THROW_SCALE,
 } from "@/lib/sim/physics";
-import { loadScene, sceneFocus } from "@/lib/sim/presets";
+import { loadScene, sceneFocus, SOLAR_PLANETS } from "@/lib/sim/presets";
 import {
   drawArrow,
   drawBody,
@@ -43,6 +43,7 @@ import { decodeExperiment, encodeExperiment } from "@/lib/sim/sharing";
 import {
   MASS_PRESETS,
   type Body,
+  type MassId,
   type ExperimentAction,
   type SceneId,
   type World,
@@ -58,6 +59,7 @@ export type SimApi = {
   replay: () => void;
   share: () => void;
   reformGalaxy: () => void;
+  zoom: (factor: number) => void;
 };
 
 type Camera = { x: number; y: number; scale: number };
@@ -126,16 +128,50 @@ function makeDefaultWorld() {
 
 function preset() {
   const ui = useSimUi.getState();
-  const id = ui.multiLaunch && ui.multiMassIds.length > 0
-    ? ui.multiMassIds[ui.launches % ui.multiMassIds.length]!
-    : ui.massId;
-  return MASS_PRESETS.find((p) => p.id === id) ?? MASS_PRESETS[4]!;
+  const id =
+    ui.multiLaunch && ui.multiMassIds.length > 0
+      ? ui.multiMassIds[ui.launches % ui.multiMassIds.length]!
+      : ui.massId;
+  return launchPreset(id, ui.sceneId);
+}
+
+function launchPreset(id: MassId, scene: SceneId) {
+  const selected = MASS_PRESETS.find((p) => p.id === id) ?? MASS_PRESETS[4]!;
+  if (scene !== "milkyway") return selected;
+  // Small-body launches use the same solar mass scale as the named planets.
+  const solarMasses: Partial<Record<typeof id, number>> = {
+    dust: 1e-9,
+    asteroid: 1e-8,
+    comet: 1e-7,
+    moon: 0.0000207,
+    planet: 0.00168168,
+    ocean: 0.00168168,
+    desert: 0.001372,
+    ice: 0.0244496,
+    lava: 0.00018088,
+    giant: 0.53452,
+    ringed: 0.160048,
+  };
+  return { ...selected, mass: solarMasses[id] ?? selected.mass };
+}
+
+function solarDisplayRadius(body: Body, scale: number) {
+  const pixels =
+    body.name === "Sun"
+      ? 9
+      : body.style === "gas" || body.style === "ringed"
+        ? 7
+        : body.style === "ice"
+          ? 5
+          : 3.5;
+  return Math.max(body.radius, pixels / scale);
 }
 
 function presetLabel(body: Body) {
   if (body.style === "comet") return "comet";
   if (body.style === "asteroid") return "asteroid";
-  if (["ocean", "desert", "ice", "lava", "ringed"].includes(body.style)) return `${body.style} world`;
+  if (["ocean", "desert", "ice", "lava", "ringed"].includes(body.style))
+    return `${body.style} world`;
   if (body.kind === "smbh") return "supermassive body";
   if (body.kind === "blackHole") return "black hole";
   if (body.kind === "redGiant") return "red giant";
@@ -146,11 +182,7 @@ function presetLabel(body: Body) {
   return "world";
 }
 
-export function OrbitCanvas({
-  apiRef,
-}: {
-  apiRef: MutableRefObject<SimApi | null>;
-}) {
+export function OrbitCanvas({ apiRef }: { apiRef: MutableRefObject<SimApi | null> }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const worldRef = useRef(makeDefaultWorld());
   const camRef = useRef<Camera>({ x: 0, y: 0, scale: 1 });
@@ -176,7 +208,8 @@ export function OrbitCanvas({
   const keysRef = useRef(new Set<string>());
   const lastMergeSerialRef = useRef(0);
   const lastPhenomenonSerialRef = useRef(0);
-  const lastCollisionReportRef = useRef(0);
+  const lastCollisionReportRef = useRef(-12000);
+  const lastPhenomenonSoundRef = useRef(-8000);
   const lastTelemetryAtRef = useRef(0);
   const lastCount = useRef(0);
 
@@ -217,17 +250,36 @@ export function OrbitCanvas({
     lastSnapshotTimeRef.current = world.time;
     lastMergeSerialRef.current = world.mergeSerial;
     lastPhenomenonSerialRef.current = world.phenomenonSerial;
-    lastCollisionReportRef.current = 0;
+    traumaRef.current = 0;
     wormholeAnchorRef.current = null;
     replayQueueRef.current = [];
     replayIndexRef.current = 0;
+  }
+
+  function fitCamera(world: World) {
+    const next = sceneFocus(world);
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const top = canvas.clientWidth < 640 ? 164 : 112;
+      const controlsTop =
+        document.querySelector(".sandbox-controls")?.getBoundingClientRect().top ??
+        canvas.clientHeight - 300;
+      const playHeight = Math.max(200, controlsTop - top - 24);
+      next.scale = clamp(
+        next.scale * Math.min(1, (canvas.clientWidth - 32) / 560, playHeight / 560),
+        MIN_SCALE,
+        MAX_SCALE,
+      );
+      next.y += (canvas.clientHeight / 2 - top - playHeight / 2) / next.scale;
+    }
+    return next;
   }
 
   function resetRuntime(world: World, id: SceneId, seed?: string) {
     loadScene(world, id, seed);
     currentSceneRef.current = id;
     resetTracking(world);
-    const next = sceneFocus(world);
+    const next = fitCamera(world);
     camRef.current = { ...next };
     const ui = useSimUi.getState();
     ui.setScene(id, world.seed);
@@ -239,8 +291,9 @@ export function OrbitCanvas({
 
   function applyExperimentAction(world: World, action: ExperimentAction) {
     if (action.type === "launch") {
-      const pset = MASS_PRESETS.find((item) => item.id === action.massId) ?? MASS_PRESETS[4]!;
-      addBody(world, {
+      const pset = launchPreset(action.massId, world.scene);
+      const host = dominantHost(world);
+      const body = addBody(world, {
         x: action.x,
         y: action.y,
         vx: action.vx,
@@ -250,6 +303,26 @@ export function OrbitCanvas({
         kind: pset.kind,
         style: pset.style,
       });
+      if (body) {
+        if (host) {
+          const dx = body.x - host.x,
+            dy = body.y - host.y;
+          launchTrackersRef.current.set(body.id, {
+            id: body.id,
+            hostId: host.id,
+            bornAt: world.time,
+            initialRelativeSpeed: Math.hypot(body.vx - host.vx, body.vy - host.vy),
+            lastDistance: Math.hypot(dx, dy),
+            minDistance: Math.hypot(dx, dy),
+            lastAngle: Math.atan2(dy, dx),
+            angleTravel: 0,
+            captured: false,
+            closeCall: false,
+            slingshot: false,
+          });
+        }
+        useSimUi.getState().recordLaunch(pset.kind);
+      }
     } else if (action.type === "wormhole") {
       spawnWormhole(world, action.ax, action.ay, action.bx, action.by);
     } else if (action.type === "nova") {
@@ -272,7 +345,10 @@ export function OrbitCanvas({
     const ui = useSimUi.getState();
     const snapshot = snapshotsRef.current[0];
     if (!snapshot || world.time - snapshot.time < 0.45) {
-      ui.announce("Timeline is still forming", "Run the experiment a little longer before rewinding.");
+      ui.announce(
+        "Timeline is still forming",
+        "Run the experiment a little longer before rewinding.",
+      );
       return;
     }
     if (!replay && !ui.consumeRewind()) return;
@@ -295,7 +371,9 @@ export function OrbitCanvas({
     phenomenonTone("rewind");
     ui.announce(
       replay ? "Cinematic replay" : "Timeline restored",
-      replay ? "The last eight seconds are running at half speed." : "Adjust the launch, then resume time.",
+      replay
+        ? "The last eight seconds are running at half speed."
+        : "Adjust the launch, then resume time.",
     );
     syncTelemetry(world);
   }
@@ -325,11 +403,10 @@ export function OrbitCanvas({
       const rvy = body.vy - host.vy;
       const relativeSpeed = Math.hypot(rvx, rvy);
       const energy =
-        0.5 * relativeSpeed * relativeSpeed -
-        (world.G * (host.mass + body.mass)) / distance;
+        0.5 * relativeSpeed * relativeSpeed - (world.G * (host.mass + body.mass)) / distance;
       const clearance = tracker.minDistance - host.radius - body.radius;
 
-      if (!tracker.captured && age > 0.9 && tracker.angleTravel > 0.62 && energy < 0) {
+      if (!tracker.captured && age > 2 && tracker.angleTravel > Math.PI && energy < 0) {
         tracker.captured = true;
         if (!body.distinctions.includes("Captured orbit")) body.distinctions.push("Captured orbit");
         recordTimeline(
@@ -351,7 +428,8 @@ export function OrbitCanvas({
       ) {
         tracker.closeCall = true;
         body.closeCalls += 1;
-        if (!body.distinctions.includes("Surface skimmer")) body.distinctions.push("Surface skimmer");
+        if (!body.distinctions.includes("Surface skimmer"))
+          body.distinctions.push("Surface skimmer");
         recordTimeline(
           world,
           "closeCall",
@@ -371,7 +449,8 @@ export function OrbitCanvas({
       ) {
         tracker.slingshot = true;
         body.assists += 1;
-        if (!body.distinctions.includes("Gravity-assisted")) body.distinctions.push("Gravity-assisted");
+        if (!body.distinctions.includes("Gravity-assisted"))
+          body.distinctions.push("Gravity-assisted");
         recordTimeline(
           world,
           "assist",
@@ -379,10 +458,13 @@ export function OrbitCanvas({
           `Exit velocity reached ${Math.round(relativeSpeed)} u/s around ${host.name}.`,
           [body.id, host.id],
         );
-        ui.recordDiscovery("slingshot", `Exit velocity climbed to ${Math.round(relativeSpeed)} u/s.`);
+        ui.recordDiscovery(
+          "slingshot",
+          `Exit velocity climbed to ${Math.round(relativeSpeed)} u/s.`,
+        );
       }
       tracker.lastDistance = distance;
-      if (age > 22 && tracker.captured) launchTrackersRef.current.delete(id);
+
       if (age > 14 && energy > 0 && distance > 2600) launchTrackersRef.current.delete(id);
     }
   }
@@ -420,7 +502,11 @@ export function OrbitCanvas({
         `A full revolution around ${host.name}.`,
         [body.id, host.id],
       );
-      ui.recordDiscovery("orbit", `${body.name} completed a full revolution around ${host.name}.`);
+      if (launchTrackersRef.current.has(body.id))
+        ui.recordDiscovery(
+          "orbit",
+          `${body.name} completed a full revolution around ${host.name}.`,
+        );
     }
   }
 
@@ -428,7 +514,7 @@ export function OrbitCanvas({
     const world = worldRef.current;
     if (world.bodies.length === 0) resetRuntime(world, "helios");
     else {
-      const focus = sceneFocus(world);
+      const focus = fitCamera(world);
       camRef.current = { ...focus };
       resetTracking(world);
       useSimUi.getState().setScene("helios", world.seed);
@@ -458,8 +544,11 @@ export function OrbitCanvas({
         resetRuntime(world, contract.scene);
         useSimUi.getState().activateContract(id, world.time);
       },
+      zoom(factor) {
+        camRef.current.scale = clamp(camRef.current.scale * factor, MIN_SCALE, MAX_SCALE);
+      },
       recenter() {
-        const next = sceneFocus(world);
+        const next = fitCamera(world);
         camRef.current.x = next.x;
         camRef.current.y = next.y;
         camRef.current.scale = next.scale;
@@ -498,16 +587,26 @@ export function OrbitCanvas({
         });
         const url = `${window.location.origin}${window.location.pathname}?run=${code}`;
         void navigator.clipboard.writeText(url).then(
-          () => useSimUi.getState().announce("Experiment copied", "The seed and launch timeline are ready to share."),
+          () =>
+            useSimUi
+              .getState()
+              .announce("Experiment copied", "The seed and launch timeline are ready to share."),
           () => useSimUi.getState().announce("Share link ready", url),
         );
       },
       reformGalaxy() {
         if (!world.galaxy) return;
         world.galaxy.formation = 0.035;
-        recordTimeline(world, "scene", "Galactic formation restarted", "The stellar cloud is collapsing into its seeded spiral again.");
+        recordTimeline(
+          world,
+          "scene",
+          "Galactic formation restarted",
+          "The stellar cloud is collapsing into its seeded spiral again.",
+        );
         useSimUi.getState().setPaused(false);
-        useSimUi.getState().announce("Formation restarted", "Increase time to watch the arms condense faster.");
+        useSimUi
+          .getState()
+          .announce("Formation restarted", "Increase time to watch the arms condense faster.");
       },
     };
     apiRef.current = api;
@@ -521,7 +620,12 @@ export function OrbitCanvas({
       replayQueueRef.current = structuredClone(decoded.actions);
       replayIndexRef.current = 0;
       useSimUi.getState().setTimeScale(0.5);
-      useSimUi.getState().announce("Shared experiment", "Replaying its deterministic launch timeline at half speed.");
+      useSimUi
+        .getState()
+        .announce(
+          "Shared experiment",
+          "Replaying its deterministic launch timeline at half speed.",
+        );
     } else {
       const seed = params.get("seed");
       if (seed) resetRuntime(world, "remix", seed.slice(0, 48));
@@ -568,7 +672,10 @@ export function OrbitCanvas({
       processReplayQueue(world);
       if (
         !ui.paused &&
-        (world.bodies.length > 0 || world.galaxy !== null || world.phenomena.length > 0 || replayIndexRef.current < replayQueueRef.current.length)
+        (world.bodies.length > 0 ||
+          world.galaxy !== null ||
+          world.phenomena.length > 0 ||
+          replayIndexRef.current < replayQueueRef.current.length)
       ) {
         acc += raw * ui.timeScale;
         const cap = FIXED_DT * 14;
@@ -586,33 +693,39 @@ export function OrbitCanvas({
         const chained = world.mergeSerial - lastMergeSerialRef.current;
         const merge = world.lastMerge;
         lastMergeSerialRef.current = world.mergeSerial;
-        traumaRef.current = Math.min(
-          1,
-          traumaRef.current + clamp(0.22 + Math.log10(merge.totalMass + 1) * 0.09, 0.3, 0.72),
-        );
-        if (merge.formedHorizon || now - lastCollisionReportRef.current > 1400) {
+        const major =
+          merge.formedHorizon ||
+          merge.absorbedMass >= 250 ||
+          (merge.absorbedMass >= 70 && merge.totalMass >= 140);
+        if (major && now - lastCollisionReportRef.current >= 12000) {
           lastCollisionReportRef.current = now;
+          traumaRef.current = merge.formedHorizon ? 0.9 : 0.6;
           collideTone(merge.totalMass);
+        }
+        // Count every merger; feedback pacing must not change challenge progress.
+        for (let i = 0; i < chained; i++)
           ui.recordDiscovery(
             "collision",
             merge.formedHorizon
-              ? "The merger crossed the event-horizon threshold."
-              : chained > 1
-                ? `${chained} impacts chained into one new body.`
-                : `${Math.round(merge.absorbedMass)} mass units joined the larger body.`,
+              ? "The merger formed a new event horizon."
+              : `${merge.survivorName} absorbed ${merge.absorbedName}.`,
           );
-        }
       }
 
       if (world.phenomenonSerial !== lastPhenomenonSerialRef.current && world.lastPhenomenon) {
         lastPhenomenonSerialRef.current = world.phenomenonSerial;
-        const event = world.lastPhenomenon;
-        if (event.kind === "well") {
-          phenomenonTone("well");
-          ui.announce(event.title, event.detail);
-        } else {
-          phenomenonTone(event.kind === "fragment" ? "nova" : event.kind);
-          ui.recordDiscovery(event.kind, event.detail);
+        for (const event of world.pendingPhenomena.splice(0)) {
+          if (event.kind !== "well") {
+            if (event.kind === "nova" && now - lastCollisionReportRef.current >= 12000) {
+              traumaRef.current = 0.7;
+              lastCollisionReportRef.current = now;
+            }
+            if (now - lastPhenomenonSoundRef.current >= 8000) {
+              phenomenonTone(event.kind === "fragment" ? "nova" : event.kind);
+              lastPhenomenonSoundRef.current = now;
+            }
+            ui.recordDiscovery(event.kind, event.detail);
+          }
         }
       }
 
@@ -642,7 +755,8 @@ export function OrbitCanvas({
       if (world.bodies.length >= 12) ui.markSystemMilestone();
 
       if (!ui.follow) {
-        const panSpeed = (keysRef.current.has("ShiftLeft") || keysRef.current.has("ShiftRight") ? 620 : 360) * raw;
+        const panSpeed =
+          (keysRef.current.has("ShiftLeft") || keysRef.current.has("ShiftRight") ? 620 : 360) * raw;
         if (keysRef.current.has("ArrowLeft")) cam.x -= panSpeed / cam.scale;
         if (keysRef.current.has("ArrowRight")) cam.x += panSpeed / cam.scale;
         if (keysRef.current.has("ArrowUp")) cam.y -= panSpeed / cam.scale;
@@ -679,7 +793,7 @@ export function OrbitCanvas({
       const fling = flingRef.current;
       const pset = preset();
 
-      if (!world.galaxy && (ui.fieldWorlds || ui.fieldHoles)) {
+      if (!world.galaxy && world.scene !== "milkyway" && (ui.fieldWorlds || ui.fieldHoles)) {
         const samples = world.bodies.map((b) => {
           const p = lerpBody(b, alpha);
           const hole = b.kind === "blackHole" || b.kind === "smbh";
@@ -698,8 +812,7 @@ export function OrbitCanvas({
           }
         }
         const ghostHole = pset.kind === "blackHole" || pset.kind === "smbh";
-        const showGhost =
-          (ghostHole && ui.fieldHoles) || (!ghostHole && ui.fieldWorlds);
+        const showGhost = (ghostHole && ui.fieldHoles) || (!ghostHole && ui.fieldWorlds);
         if (ui.instrument === "launch" && showGhost && fling) {
           samples.push({
             x: fling.x,
@@ -722,20 +835,37 @@ export function OrbitCanvas({
             hole: ghostHole,
           });
         }
-        const visible = samples.filter((s) =>
-          s.hole ? ui.fieldHoles : ui.fieldWorlds,
-        );
+        const visible = samples.filter((s) => (s.hole ? ui.fieldHoles : ui.fieldWorlds));
         if (visible.length > 0) {
-          drawGravityFieldEnhanced(ctx, visible, world.G, world.softening, {
-            x: cam.x,
-            y: cam.y,
-            scale: cam.scale,
-            w,
-            h,
-          }, now / 1000);
+          drawGravityFieldEnhanced(
+            ctx,
+            visible,
+            world.G,
+            world.softening,
+            {
+              x: cam.x,
+              y: cam.y,
+              scale: cam.scale,
+              w,
+              h,
+            },
+            now / 1000,
+          );
         }
       }
 
+      if (world.scene === "milkyway") {
+        const sun = world.bodies.find((body) => body.name === "Sun");
+        if (sun) {
+          ctx.lineWidth = 1 / cam.scale;
+          ctx.strokeStyle = "rgba(180,193,209,0.15)";
+          for (const planet of SOLAR_PLANETS) {
+            ctx.beginPath();
+            ctx.arc(sun.x, sun.y, planet.distance, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
+      }
       drawPhenomena(ctx, world, now / 1000);
       if (ui.trails) drawTrails(ctx, world.bodies, alpha);
 
@@ -746,9 +876,73 @@ export function OrbitCanvas({
 
       for (const body of world.bodies) {
         const p = lerpBody(body, alpha);
-        drawBody(ctx, p.x, p.y, body.radius, body.color, body.glow, body.kind, body.style, body.vx, body.vy, now / 1000);
+        const displayRadius =
+          world.scene === "milkyway" ? solarDisplayRadius(body, cam.scale) : body.radius;
+        drawBody(
+          ctx,
+          p.x,
+          p.y,
+          displayRadius,
+          body.color,
+          body.glow,
+          body.kind,
+          body.style,
+          body.vx,
+          body.vy,
+          now / 1000,
+        );
       }
 
+      if (world.scene === "milkyway") {
+        ctx.font = `${13 / cam.scale}px sans-serif`;
+        ctx.textAlign = "center";
+        for (const body of world.bodies) {
+          if (body.name !== "Sun" && !body.distinctions.includes("Solar System planet")) continue;
+          const p = lerpBody(body, alpha);
+          ctx.fillStyle = "#d3d8de";
+          const sun = world.bodies.find((b) => b.name === "Sun");
+          const radius = solarDisplayRadius(body, cam.scale);
+          if (body.name === "Sun" || !sun) {
+            ctx.textAlign = "center";
+            ctx.fillText(body.name, p.x, p.y - radius - 8 / cam.scale);
+          } else {
+            const angle = Math.atan2(p.y - sun.y, p.x - sun.x);
+            ctx.textAlign = Math.cos(angle) >= 0 ? "left" : "right";
+            const offset = radius + 7 / cam.scale;
+            ctx.fillText(
+              body.name,
+              p.x + Math.cos(angle) * offset,
+              p.y + Math.sin(angle) * offset + 4 / cam.scale,
+            );
+          }
+        }
+      }
+      if (["cometStorm", "accretion", "gargantua", "binary"].includes(world.scene)) {
+        const namedTargets = new Set([
+          "Vigil",
+          "Sahra",
+          "Pelagos",
+          "Crown",
+          "Lava embryo",
+          "Ocean embryo",
+          "Ice embryo",
+          "Miller",
+          "Mann",
+          "Endurance",
+          "Castor",
+          "Pollux",
+        ]);
+        ctx.font = `${13 / cam.scale}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.fillStyle = "#d3d8de";
+        for (const body of world.bodies) {
+          if (!namedTargets.has(body.name)) continue;
+          const p = lerpBody(body, alpha);
+          const label =
+            world.scene === "accretion" ? `${body.name} · ${Math.round(body.mass)} m` : body.name;
+          ctx.fillText(label, p.x, p.y + body.radius + 17 / cam.scale);
+        }
+      }
       drawBursts(ctx, world);
 
       if (hoverRef.current && modeRef.current === "none" && ui.instrument !== "launch") {
@@ -948,10 +1142,7 @@ export function OrbitCanvas({
       return;
     }
 
-    const pan =
-      e.button === 1 ||
-      e.button === 2 ||
-      e.shiftKey;
+    const pan = e.button === 1 || e.button === 2 || e.shiftKey;
     if (pan) {
       modeRef.current = "pan";
       panRef.current = {
@@ -974,11 +1165,17 @@ export function OrbitCanvas({
         const anchor = wormholeAnchorRef.current;
         if (!anchor) {
           wormholeAnchorRef.current = point;
-          ui.announce("First aperture placed", "Choose a second point at least 70 field units away.");
+          ui.announce(
+            "First aperture placed",
+            "Choose a second point at least 70 field units away.",
+          );
         } else {
           const pair = spawnWormhole(world, anchor.x, anchor.y, point.x, point.y);
           if (!pair) {
-            ui.announce("Apertures too close", "Separate the two wormhole mouths before linking them.");
+            ui.announce(
+              "Apertures too close",
+              "Separate the two wormhole mouths before linking them.",
+            );
           } else {
             world.actions.push({
               type: "wormhole",
@@ -1018,7 +1215,12 @@ export function OrbitCanvas({
       pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     }
 
-    if (modeRef.current === "pinch" && pointersRef.current.size === 2 && pinchRef.current && panRef.current) {
+    if (
+      modeRef.current === "pinch" &&
+      pointersRef.current.size === 2 &&
+      pinchRef.current &&
+      panRef.current
+    ) {
       const pts = [...pointersRef.current.values()];
       const dx = pts[0]!.x - pts[1]!.x;
       const dy = pts[0]!.y - pts[1]!.y;
@@ -1142,7 +1344,6 @@ export function OrbitCanvas({
       pinchRef.current = null;
     }
   }
-
 
   return (
     <canvas

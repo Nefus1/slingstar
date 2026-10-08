@@ -1,8 +1,17 @@
-import { TRAIL_CAP, type Body, type GalaxySystem, type Phenomenon, type TimelineEvent, type World } from "./types";
+import {
+  TRAIL_CAP,
+  type Body,
+  type GalaxySystem,
+  type Phenomenon,
+  type TimelineEvent,
+  type World,
+} from "./types";
 
 type BodySnapshot = Omit<Body, "trail">;
 
 export type WorldSnapshot = {
+  stormWave: number;
+  nextEncounterAt: number;
   time: number;
   nextId: number;
   nextPhenomenonId: number;
@@ -19,6 +28,8 @@ export type WorldSnapshot = {
 
 export function captureSnapshot(world: World): WorldSnapshot {
   return {
+    stormWave: world.stormWave,
+    nextEncounterAt: world.nextEncounterAt,
     time: world.time,
     nextId: world.nextId,
     nextPhenomenonId: world.nextPhenomenonId,
@@ -38,6 +49,8 @@ export function captureSnapshot(world: World): WorldSnapshot {
 }
 
 export function restoreSnapshot(world: World, snapshot: WorldSnapshot) {
+  world.stormWave = snapshot.stormWave;
+  world.nextEncounterAt = snapshot.nextEncounterAt;
   world.time = snapshot.time;
   world.nextId = snapshot.nextId;
   world.nextPhenomenonId = snapshot.nextPhenomenonId;
@@ -45,6 +58,7 @@ export function restoreSnapshot(world: World, snapshot: WorldSnapshot) {
   world.lastMerge = null;
   world.phenomenonSerial = snapshot.phenomenonSerial;
   world.lastPhenomenon = null;
+  world.pendingPhenomena.length = 0;
   world.fragmentSerial = snapshot.fragmentSerial;
   world.rngState = snapshot.rngState;
   world.phenomena = structuredClone(snapshot.phenomena);

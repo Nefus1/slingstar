@@ -1,7 +1,7 @@
 import { CONTRACTS, type ContractId } from "./contracts";
 
 const STORAGE_KEY = "apsis:field-notes";
-const SAVE_VERSION = 2;
+const SAVE_VERSION = 3;
 
 export type SavedLabProfile = {
   version: number;
@@ -9,6 +9,8 @@ export type SavedLabProfile = {
   totalDiscoveries: number;
   sound: boolean;
   shake: boolean;
+  challengingTasks: boolean;
+  notifiedDiscoveries: string[];
   completedContracts: ContractId[];
 };
 
@@ -18,6 +20,8 @@ export const DEFAULT_PROFILE: SavedLabProfile = {
   totalDiscoveries: 0,
   sound: true,
   shake: true,
+  challengingTasks: true,
+  notifiedDiscoveries: [],
   completedContracts: [],
 };
 
@@ -37,6 +41,11 @@ export function loadProfile(): SavedLabProfile {
       bestScore: Math.max(0, Number(parsed.bestScore) || 0),
       totalDiscoveries: Math.max(0, Number(parsed.totalDiscoveries) || 0),
       completedContracts,
+      challengingTasks:
+        typeof parsed.challengingTasks === "boolean" ? parsed.challengingTasks : true,
+      notifiedDiscoveries: Array.isArray(parsed.notifiedDiscoveries)
+        ? parsed.notifiedDiscoveries.filter((id): id is string => typeof id === "string")
+        : [],
       version: SAVE_VERSION,
     };
   } catch {
@@ -48,7 +57,10 @@ export function saveProfile(profile: Omit<SavedLabProfile, "version">) {
   if (typeof window === "undefined") return;
   try {
     const next: SavedLabProfile = { version: SAVE_VERSION, ...profile };
-    window.localStorage.setItem(`${STORAGE_KEY}:backup`, window.localStorage.getItem(STORAGE_KEY) ?? "");
+    window.localStorage.setItem(
+      `${STORAGE_KEY}:backup`,
+      window.localStorage.getItem(STORAGE_KEY) ?? "",
+    );
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   } catch {
     // Storage can be unavailable in private or embedded browsing contexts.

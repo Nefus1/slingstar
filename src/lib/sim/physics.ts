@@ -1,10 +1,4 @@
-import {
-  TRAIL_CAP,
-  type Body,
-  type BodyKind,
-  type BodyStyle,
-  type World,
-} from "./types";
+import { TRAIL_CAP, type Body, type BodyKind, type BodyStyle, type World } from "./types";
 import { bodyName, hashSeed, nextRandom } from "./rng";
 import type { TimelineEventType } from "./types";
 
@@ -67,6 +61,9 @@ function mergeKind(a: Body, b: Body): BodyKind {
 
 export function createWorld(seed = "HELIOS-17"): World {
   return {
+    scene: "empty",
+    stormWave: 0,
+    nextEncounterAt: 18,
     bodies: [],
     bursts: [],
     sparks: [],
@@ -82,6 +79,7 @@ export function createWorld(seed = "HELIOS-17"): World {
     nextPhenomenonId: 1,
     phenomenonSerial: 0,
     lastPhenomenon: null,
+    pendingPhenomena: [],
     fragmentSerial: 0,
     timeline: [],
     nextTimelineId: 1,
@@ -160,6 +158,9 @@ export function addBody(
 }
 
 export function clearWorld(world: World) {
+  world.scene = "empty";
+  world.stormWave = 0;
+  world.nextEncounterAt = 18;
   world.bodies.length = 0;
   world.bursts.length = 0;
   world.sparks.length = 0;
@@ -171,6 +172,7 @@ export function clearWorld(world: World) {
   world.nextPhenomenonId = 1;
   world.phenomenonSerial = 0;
   world.lastPhenomenon = null;
+  world.pendingPhenomena.length = 0;
   world.fragmentSerial = 0;
   world.timeline.length = 0;
   world.nextTimelineId = 1;
@@ -216,6 +218,8 @@ function emitPhenomenon(
     detail,
     bodyId,
   };
+  world.pendingPhenomena.push(world.lastPhenomenon);
+  if (world.pendingPhenomena.length > 72) world.pendingPhenomena.shift();
 }
 
 export function mixHex(a: string, b: string, t: number): string {
@@ -317,7 +321,8 @@ function mergePair(world: World, a: Body, b: Body): Body {
   heavy.kind = mergeKind(a, b);
   if (heavy.style !== "gargantua") {
     if (heavy.kind !== "rock") heavy.style = inferStyle(m, heavy.kind);
-    else if (["dust", "asteroid", "comet", "moon"].includes(heavy.style) && m >= 14) heavy.style = "terrestrial";
+    else if (["dust", "asteroid", "comet", "moon"].includes(heavy.style) && m >= 14)
+      heavy.style = "terrestrial";
   }
   heavy.radius = radiusFor(m, heavy.kind);
   heavy.color = mixHex(heavy.color, light.color, t * 0.65);
@@ -441,7 +446,13 @@ function fragmentBody(world: World, victim: Body, impactX: number, impactY: numb
   }
   const detail = `${victim.name} split into ${count} momentum-bearing fragments.`;
   emitPhenomenon(world, "fragment", "Fragmentation event", detail, children[0]?.id);
-  recordTimeline(world, "fragment", `${victim.name} broke apart`, detail, children.map((body) => body.id));
+  recordTimeline(
+    world,
+    "fragment",
+    `${victim.name} broke apart`,
+    detail,
+    children.map((body) => body.id),
+  );
   return true;
 }
 
@@ -463,7 +474,10 @@ function resolveCollisions(world: World, bodies: Body[]): boolean {
           fragmentCandidate.mass > 5 &&
           fragmentCandidate.fragmentGeneration < 2 &&
           a.mass + b.mass < 210;
-        if (canFragment && fragmentBody(world, fragmentCandidate, (a.x + b.x) / 2, (a.y + b.y) / 2)) {
+        if (
+          canFragment &&
+          fragmentBody(world, fragmentCandidate, (a.x + b.x) / 2, (a.y + b.y) / 2)
+        ) {
           const survivor = fragmentCandidate === a ? b : a;
           const nx = dx / (Math.hypot(dx, dy) || 1);
           const ny = dy / (Math.hypot(dx, dy) || 1);
@@ -513,13 +527,7 @@ function substepCount(bodies: Body[], dt: number): number {
   return Math.min(10, Math.ceil(travel / 10));
 }
 
-export function spawnWormhole(
-  world: World,
-  ax0: number,
-  ay0: number,
-  bx0: number,
-  by0: number,
-) {
+export function spawnWormhole(world: World, ax0: number, ay0: number, bx0: number, by0: number) {
   const separation = Math.hypot(bx0 - ax0, by0 - ay0);
   if (separation < 70) return null;
   const pair = {
@@ -609,7 +617,8 @@ function processWormholes(world: World, dt: number) {
       body.wormholeCooldown = 1.1;
       body.glow = 1;
       phenomenon.uses += 1;
-      if (!body.distinctions.includes("Fold-space traveler")) body.distinctions.push("Fold-space traveler");
+      if (!body.distinctions.includes("Fold-space traveler"))
+        body.distinctions.push("Fold-space traveler");
       const detail = `${body.name} crossed the gate with momentum preserved.`;
       emitPhenomenon(world, "wormhole", "Wormhole transit", detail, body.id);
       recordTimeline(world, "wormhole", `${body.name} crossed fold-space`, detail, [body.id]);
@@ -675,6 +684,7 @@ export function stepWorld(world: World, dt: number, record = true) {
     return;
   }
   world.time += dt;
+  tickEncounters(world);
   const subs = substepCount(bodies, dt);
   const h = dt / subs;
   for (let s = 0; s < subs; s++) {
@@ -691,6 +701,38 @@ export function stepWorld(world: World, dt: number, record = true) {
   }
   cullFar(world);
   tickFx(world, dt);
+}
+
+function tickEncounters(world: World) {
+  if (world.scene !== "cometStorm" || world.time < world.nextEncounterAt) return;
+  world.nextEncounterAt += 18;
+  world.stormWave += 1;
+  const host = world.bodies.find((body) => body.name === "Vigil");
+  if (!host) return;
+  const count = Math.min(12, 5 + world.stormWave);
+  for (let i = 0; i < count; i++) {
+    const angle = nextRandom(world) * Math.PI * 2;
+    const distance = 650 + nextRandom(world) * 160;
+    const speed = 70 + Math.min(50, world.stormWave * 6) + nextRandom(world) * 25;
+    const skew = (nextRandom(world) - 0.5) * 0.65;
+    addBody(world, {
+      x: host.x + Math.cos(angle) * distance,
+      y: host.y + Math.sin(angle) * distance,
+      vx: host.vx - Math.cos(angle + skew) * speed,
+      vy: host.vy - Math.sin(angle + skew) * speed,
+      mass: 4 + nextRandom(world) * 5,
+      color: "#b9ddec",
+      kind: "rock",
+      style: "comet",
+      name: `Wave ${world.stormWave + 1} · Comet ${i + 1}`,
+    });
+  }
+  recordTimeline(
+    world,
+    "scene",
+    `Comet wave ${world.stormWave + 1} inbound`,
+    `${count} visitors incoming. Redirect them to protect the inner worlds.`,
+  );
 }
 
 function stepGalaxy(world: World, dt: number) {
@@ -833,6 +875,7 @@ export function predictPath(
       kind: b.kind,
       style: b.style,
     });
+    c.radius = b.radius;
     sim.bodies.push(c);
   }
   const g = makeBody(sim, ghost);

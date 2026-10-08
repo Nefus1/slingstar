@@ -979,3 +979,34 @@
     animation: none;
   }
 }
+
+/* Sandbox controls expose one category at a time, keeping the field visible. */
+.sandbox-controls .launch-options { max-height: 32dvh; overflow-y: auto; }
+.control-tab { min-height: 44px; padding: 0 16px; border-radius: var(--radius-sm); color: var(--color-muted); font-size: 14px; }
+.control-tab-selected { color: var(--color-fg); background: var(--color-surface-2); box-shadow: inset 0 -2px var(--color-accent); }
+.body-category { min-height: 44px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-muted); font-size: 14px; }
+.body-category-selected { color: var(--color-fg); border-color: var(--color-accent); }
+.body-picks { display: flex; flex-wrap: wrap; gap: 6px; }
+.body-picks .mass-button { min-width: 0; }
+.control-label { display: none; }
+.launch-options .control-label { display: inline; }
+.mission-card { position: absolute; left: 12px; top: 104px; width: 272px; max-width: calc(100% - 24px); }
+.mission-heading { display: flex; width: 100%; min-height: 44px; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; text-align: left; }
+.mission-content { display: none; padding: 4px 16px 16px; max-height: 45dvh; overflow: auto; }
+.mission-card-expanded .mission-content { display: block; }
+.mission-card-expanded .mission-chevron { transform: rotate(180deg); }
+@media (min-width: 1024px) {
+  .mission-card { left: 20px; top: 112px; }
+}
+@media (max-width: 639px) {
+  .sandbox-controls .hud-panel { padding: 10px; }
+  .sandbox-controls .launch-options { max-height: 28dvh; }
+  .sandbox-controls .tool-button { padding-inline: 9px; }
+  .body-picks .mass-button { padding-inline: 10px; }
+  .discovery-notice { top: 156px; }
+  .mission-card-expanded ~ .discovery-notice { opacity: 0; }
+}
+@media (max-width: 639px) {
+  .sandbox-header > div:first-child .hud-panel { padding-inline: 10px; }
+  .sandbox-header a { white-space: nowrap; flex-shrink: 0; }
+}
