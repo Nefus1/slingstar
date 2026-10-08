@@ -3,7 +3,15 @@ import { create } from "zustand";
 import { contractById, type ContractId, type ContractMetric } from "./contracts";
 import { discoveryTone, setAudioEnabled } from "./audio";
 import { loadProfile, saveProfile } from "./progress";
-import type { BodyKind, BodySummary, InstrumentId, MassId, SceneId, TimelineEvent } from "./types";
+import type {
+  CosmicEncounter,
+  BodyKind,
+  BodySummary,
+  InstrumentId,
+  MassId,
+  SceneId,
+  TimelineEvent,
+} from "./types";
 
 export type DiscoveryKind =
   | "capture"
@@ -47,6 +55,7 @@ const DISCOVERIES: Record<
 type ContractStatus = "idle" | "active" | "complete" | "failed";
 
 type WorldTelemetry = {
+  encounter: CosmicEncounter | null;
   bodyCount: number;
   worldTime: number;
   seed: string;
@@ -59,6 +68,9 @@ type WorldTelemetry = {
 };
 
 type SimUi = {
+  encounter: CosmicEncounter | null;
+  orbitAssist: boolean;
+  setOrbitAssist: (enabled: boolean) => void;
   massId: MassId;
   instrument: InstrumentId;
   sceneId: SceneId;
@@ -323,6 +335,9 @@ export const useSimUi = create<SimUi>((set, get) => {
     completedContracts: [],
     rewindsUsed: 0,
     ...freshSession,
+    encounter: null,
+    orbitAssist: false,
+    setOrbitAssist: (orbitAssist) => set({ orbitAssist }),
     setMassId: (id) => set({ massId: id, instrument: "launch", multiLaunch: false }),
     toggleMultiMassId: (id) =>
       set((state) => {
@@ -341,6 +356,7 @@ export const useSimUi = create<SimUi>((set, get) => {
       set({
         ...freshSession,
         sceneId: id,
+        encounter: null,
         seed,
         activeContractId: null,
         contractStatus: "idle",

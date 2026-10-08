@@ -1,18 +1,17 @@
 import {
   Check,
   ChevronDown,
-  ChevronUp,
   Minus,
   Plus,
   CircleDot,
   ClipboardList,
   Crosshair,
   Eye,
-  FlaskConical,
   History,
   Home,
   LocateFixed,
   Magnet,
+  MoreHorizontal,
   Orbit,
   Pause,
   Play,
@@ -24,16 +23,30 @@ import {
   Undo2,
   Volume2,
   VolumeX,
+  X,
 } from "lucide-react";
+import * as Popover from "@radix-ui/react-popover";
 import { useEffect, useState, type MutableRefObject, type ReactNode } from "react";
 import { AuthChip } from "@/components/sim/auth-chip";
 import { LabReport } from "@/components/sim/lab-report";
 import type { SimApi } from "@/components/sim/orbit-canvas";
 import { fieldGoals } from "@/lib/sim/challenges";
 import { contractById } from "@/lib/sim/contracts";
+import { ENCOUNTERS } from "@/lib/sim/encounters";
 import { COSMIC_MODES, MASS_PRESETS, SCENES, type MassId, type SceneId } from "@/lib/sim/types";
 import { useSimUi, type DiscoveryToast as DiscoveryToastType } from "@/lib/sim/store";
 import { cn } from "@/lib/utils";
+
+type DockPanel = "bodies" | "modes" | "tools" | "events" | "speed" | "more";
+const BODY_CATEGORIES: { id: string; label: string; ids: MassId[] }[] = [
+  { id: "rocks", label: "Small bodies", ids: ["dust", "asteroid", "comet", "moon"] },
+  {
+    id: "worlds",
+    label: "Planets",
+    ids: ["planet", "ocean", "desert", "ice", "lava", "giant", "ringed"],
+  },
+  { id: "stars", label: "Stars & holes", ids: ["star", "redGiant", "blackHole", "smbh"] },
+];
 
 export function Hud({
   apiRef,
@@ -42,461 +55,569 @@ export function Hud({
   apiRef: MutableRefObject<SimApi | null>;
   onExit: () => void;
 }) {
-  const massId = useSimUi((s) => s.massId);
-  const multiMassIds = useSimUi((s) => s.multiMassIds);
-  const multiLaunch = useSimUi((s) => s.multiLaunch);
-  const instrument = useSimUi((s) => s.instrument);
-  const timeScale = useSimUi((s) => s.timeScale);
-  const trails = useSimUi((s) => s.trails);
-  const fieldWorlds = useSimUi((s) => s.fieldWorlds);
-  const fieldHoles = useSimUi((s) => s.fieldHoles);
-  const paused = useSimUi((s) => s.paused);
-  const follow = useSimUi((s) => s.follow);
-  const bodyCount = useSimUi((s) => s.bodyCount);
-  const galaxyStars = useSimUi((s) => s.galaxyStars);
-  const sceneId = useSimUi((s) => s.sceneId);
-  const score = useSimUi((s) => s.score);
-  const objectivesComplete = useSimUi((s) => s.objectivesComplete);
-  const sound = useSimUi((s) => s.sound);
-  const hudHidden = useSimUi((s) => s.hudHidden);
-  const reportOpen = useSimUi((s) => s.reportOpen);
-  const rewindSeconds = useSimUi((s) => s.rewindSeconds);
-  const lastDiscovery = useSimUi((s) => s.lastDiscovery);
-  const setMassId = useSimUi((s) => s.setMassId);
-  const toggleMultiMassId = useSimUi((s) => s.toggleMultiMassId);
-  const toggleMultiLaunch = useSimUi((s) => s.toggleMultiLaunch);
-  const setInstrument = useSimUi((s) => s.setInstrument);
-  const setTimeScale = useSimUi((s) => s.setTimeScale);
-  const toggleTrails = useSimUi((s) => s.toggleTrails);
-  const toggleFieldWorlds = useSimUi((s) => s.toggleFieldWorlds);
-  const toggleFieldHoles = useSimUi((s) => s.toggleFieldHoles);
-  const togglePaused = useSimUi((s) => s.togglePaused);
-  const toggleFollow = useSimUi((s) => s.toggleFollow);
-  const toggleSound = useSimUi((s) => s.toggleSound);
-  const toggleHud = useSimUi((s) => s.toggleHud);
-  const setReportOpen = useSimUi((s) => s.setReportOpen);
-  const hydrateProfile = useSimUi((s) => s.hydrateProfile);
-  const challengingTasks = useSimUi((s) => s.challengingTasks);
-  const toggleChallengingTasks = useSimUi((s) => s.toggleChallengingTasks);
-  const shake = useSimUi((s) => s.shake);
-  const toggleShake = useSimUi((s) => s.toggleShake);
-  const [panel, setPanel] = useState<"bodies" | "modes" | "tools" | "view">("bodies");
+  const state = useSimUi();
+  const [panel, setPanel] = useState<DockPanel | null>(null);
   const [category, setCategory] = useState("worlds");
-  const [collapsed, setCollapsed] = useState(false);
-
-  useEffect(() => hydrateProfile(), [hydrateProfile]);
-
+  useEffect(() => state.hydrateProfile(), [state.hydrateProfile]);
   const showDiscovery =
-    lastDiscovery !== null && Date.now() - lastDiscovery.createdAt < 5000 && !reportOpen;
+    state.lastDiscovery !== null &&
+    Date.now() - state.lastDiscovery.createdAt < 5000 &&
+    !state.reportOpen;
+  const selected = MASS_PRESETS.find((m) => m.id === state.massId)!;
+  const scene = [...COSMIC_MODES, ...SCENES].find((m) => m.id === state.sceneId)!;
+  const visibleMasses = MASS_PRESETS.filter((m) =>
+    BODY_CATEGORIES.find((c) => c.id === category)!.ids.includes(m.id),
+  );
+  const close = () => setPanel(null);
+  const hint =
+    state.instrument === "wormhole"
+      ? "Tap two points to link a wormhole"
+      : state.instrument === "nova"
+        ? "Tap to send a nova pulse"
+        : state.instrument === "gravityWell"
+          ? "Tap to bend trajectories with a gravity well"
+          : state.orbitAssist
+            ? "Tap for an orbit · drag to aim manually"
+            : "Drag to aim and launch";
 
-  if (hudHidden) {
+  function picker(
+    id: DockPanel,
+    label: string,
+    trigger: ReactNode,
+    content: ReactNode,
+    side: "top" | "bottom" = "top",
+  ) {
     return (
-      <div className="pointer-events-none absolute inset-0 z-20">
-        {showDiscovery && lastDiscovery && (
-          <DiscoveryToast key={lastDiscovery.id} toast={lastDiscovery} />
-        )}
-        <button
-          type="button"
-          className="secondary-button pointer-events-auto absolute bottom-14 right-3 shadow-panel sm:bottom-5 sm:right-5"
-          onClick={toggleHud}
-        >
-          <Eye className="size-4" />
-          Show controls
-        </button>
-      </div>
+      <Popover.Root modal open={panel === id} onOpenChange={(open) => setPanel(open ? id : null)}>
+        <Popover.Trigger asChild>{trigger}</Popover.Trigger>
+        <Popover.Portal>
+          <Popover.Content
+            className="dock-picker hud-panel lab-scroll"
+            side={side}
+            sideOffset={12}
+            collisionPadding={12}
+            aria-label={label}
+          >
+            <div className="picker-heading">
+              <h2 className="text-sm font-semibold">{label}</h2>
+              <Popover.Close className="picker-close" aria-label={`Close ${label}`}>
+                <X className="size-4" />
+              </Popover.Close>
+            </div>
+            {content}
+          </Popover.Content>
+        </Popover.Portal>
+      </Popover.Root>
     );
   }
 
-  const categories: { id: string; label: string; ids: MassId[] }[] = [
-    { id: "rocks", label: "Small bodies", ids: ["dust", "asteroid", "comet", "moon"] },
-    {
-      id: "worlds",
-      label: "Planets",
-      ids: ["planet", "ocean", "desert", "ice", "lava", "giant", "ringed"],
-    },
-    { id: "stars", label: "Stars & holes", ids: ["star", "redGiant", "blackHole", "smbh"] },
-    {
-      id: "mixed",
-      label: "Mixed",
-      ids: ["moon", "planet", "ocean", "desert", "ice", "lava", "giant", "ringed"],
-    },
-  ];
-  const selectedPreset = MASS_PRESETS.find((m) => m.id === massId)!;
-  const visibleMasses = MASS_PRESETS.filter((m) =>
-    categories.find((c) => c.id === category)!.ids.includes(m.id),
-  );
+  if (state.hudHidden)
+    return (
+      <div className="pointer-events-none absolute inset-0 z-20">
+        {showDiscovery && state.lastDiscovery && (
+          <DiscoveryToast key={state.lastDiscovery.id} toast={state.lastDiscovery} />
+        )}
+        <button
+          type="button"
+          className="secondary-button pointer-events-auto absolute bottom-14 right-3 sm:bottom-5 sm:right-5"
+          onClick={state.toggleHud}
+        >
+          <Eye className="size-4" /> Show controls
+        </button>
+      </div>
+    );
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-20 flex flex-col justify-between p-3 pb-14 sm:p-5">
-      <header className="sandbox-header flex items-start justify-between gap-2">
-        <div className="flex items-start gap-2">
-          <div className="hud-panel pointer-events-auto px-4 py-3">
-            <div className="flex items-baseline gap-2">
-              <h1 className="font-display text-2xl italic leading-none tracking-tight text-fg sm:text-3xl">
-                Apsis
-              </h1>
-              <span className="eyebrow hidden sm:inline">Strange Orbits</span>
-            </div>
-            <p className="mt-1 hidden text-sm text-muted sm:block">
-              Drag to launch · Right-drag to pan · Scroll to zoom
-            </p>
-            <p className="mt-1 text-xs text-muted sm:hidden">Drag to launch a world</p>
-          </div>
-          <div className="hud-panel hidden min-h-16 px-4 py-3 sm:block">
-            <p className="eyebrow">Score</p>
-            <p key={score} className="score-pop mt-1 font-mono text-sm tabular-nums text-fg">
-              {formatScore(score)}
-            </p>
-          </div>
+    <div className="sandbox-hud pointer-events-none absolute inset-0 z-20">
+      <header className="sandbox-header">
+        <div className="flex items-center gap-3">
+          <h1 className="font-display text-3xl italic leading-none tracking-tight">Apsis</h1>
+          {picker(
+            "modes",
+            "Choose a scene",
+            <button type="button" className="dock-scene" aria-label="Choose simulation mode">
+              {scene.label}
+              <ChevronDown className="size-3.5" />
+            </button>,
+            <div className="space-y-3">
+              <div className="scene-picks">
+                {[...COSMIC_MODES, ...SCENES].map((mode) => (
+                  <button
+                    type="button"
+                    key={mode.id}
+                    aria-label={mode.label}
+                    aria-pressed={state.sceneId === mode.id}
+                    onClick={() => {
+                      apiRef.current?.loadScene(mode.id);
+                      close();
+                    }}
+                    className={cn("scene-pick", state.sceneId === mode.id && "scene-pick-selected")}
+                  >
+                    <span>{mode.label}</span>
+                    <span className="text-xs text-muted">
+                      {COSMIC_MODES.find((m) => m.id === mode.id)?.short ?? MODE_BRIEFS[mode.id]}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="secondary-button w-full"
+                onClick={() => {
+                  apiRef.current?.loadScene(state.sceneId);
+                  close();
+                }}
+              >
+                <History className="size-4" /> Restart mode
+              </button>
+            </div>,
+            "bottom",
+          )}
         </div>
-
-        <div className="pointer-events-auto flex items-center gap-2">
-          <IconButton label="Choose game mode" onClick={onExit}>
-            <Home className="size-4" />
-          </IconButton>
-          <IconButton label={sound ? "Mute sound" : "Enable sound"} onClick={toggleSound}>
-            {sound ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
-          </IconButton>
-          <IconButton
-            label="Open field notes"
-            onClick={() => setReportOpen(true)}
-            badge={challengingTasks && !objectivesComplete}
+        <div className="pointer-events-auto flex items-center gap-1">
+          <span
+            className="dock-score hidden font-mono text-xs text-muted sm:block"
+            title="Session score"
           >
+            {formatScore(state.score)}
+          </span>
+          <IconButton label="Open field notes" onClick={() => state.setReportOpen(true)}>
             <ClipboardList className="size-4" />
           </IconButton>
-          <div className="hidden sm:block">
-            <IconButton label="Copy experiment replay" onClick={() => apiRef.current?.share()}>
-              <Share2 className="size-4" />
-            </IconButton>
-          </div>
           <AuthChip />
         </div>
       </header>
-
       <MissionCard apiRef={apiRef} />
-
-      {showDiscovery && lastDiscovery && (
-        <DiscoveryToast key={lastDiscovery.id} toast={lastDiscovery} />
+      <EncounterStatus />
+      {showDiscovery && state.lastDiscovery && (
+        <DiscoveryToast key={state.lastDiscovery.id} toast={state.lastDiscovery} />
       )}
 
-      <footer className="sandbox-controls pointer-events-auto mx-auto w-full max-w-5xl">
-        <div className="hud-panel p-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <p className="eyebrow">
-                {instrument === "launch" ? "Launch body" : "Place instrument"}
-              </p>
-              <p className="mt-1 truncate text-sm text-fg">
-                {instrument === "launch"
-                  ? multiLaunch
-                    ? `Mixed launcher · ${multiMassIds.length} types`
-                    : selectedPreset.label
-                  : instrument === "nova"
-                    ? "Nova pulse"
-                    : instrument === "gravityWell"
-                      ? "Gravity well"
-                      : "Wormhole"}{" "}
-                <span className="text-muted">
-                  · {instrument === "launch" ? "drag to aim" : "tap to place"}
-                </span>
-              </p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <span className="hidden font-mono text-xs text-muted sm:block">
-                {galaxyStars > 0 ? `${galaxyStars} stars · ` : ""}
-                {bodyCount} bodies
-              </span>
-              <IconButton
-                label={collapsed ? "Expand launch controls" : "Collapse launch controls"}
-                onClick={() => setCollapsed(!collapsed)}
-              >
-                {collapsed ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
-              </IconButton>
-            </div>
-          </div>
-          {!collapsed && (
-            <div className="launch-options lab-scroll">
-              <nav
-                className="control-strip my-2 flex gap-1.5 overflow-x-auto"
-                aria-label="Sandbox control categories"
-              >
-                {(["bodies", "modes", "tools", "view"] as const).map((tab) => (
+      <aside className="camera-dock pointer-events-auto" aria-label="Camera controls">
+        <IconButton label="Zoom in" onClick={() => apiRef.current?.zoom(1.3)}>
+          <Plus className="size-4" />
+        </IconButton>
+        <IconButton label="Zoom out" onClick={() => apiRef.current?.zoom(1 / 1.3)}>
+          <Minus className="size-4" />
+        </IconButton>
+        <IconButton label="Recenter" onClick={() => apiRef.current?.recenter()}>
+          <LocateFixed className="size-4" />
+        </IconButton>
+      </aside>
+
+      <footer className="sandbox-controls pointer-events-auto">
+        <p className="dock-hint text-xs text-muted">{hint}</p>
+        <div className="launch-dock hud-panel">
+          {picker(
+            "bodies",
+            "Launch body",
+            <button type="button" className="dock-body" aria-label="Choose launch body">
+              <span className="body-swatch" style={{ background: selected.color }} aria-hidden />
+              <span>{state.multiLaunch ? "Mixed bodies" : selected.label}</span>
+              <ChevronDown className="size-3.5" />
+            </button>,
+            <section aria-label="Body catalog" className="space-y-3">
+              <nav className="picker-categories" aria-label="Body categories">
+                {BODY_CATEGORIES.map((c) => (
                   <button
                     type="button"
-                    key={tab}
-                    aria-pressed={panel === tab}
-                    className={cn("control-tab", panel === tab && "control-tab-selected")}
-                    onClick={() => setPanel(tab)}
+                    key={c.id}
+                    aria-pressed={category === c.id}
+                    className={cn("body-category", category === c.id && "body-category-selected")}
+                    onClick={() => setCategory(c.id)}
                   >
-                    {tab === "bodies"
-                      ? "Bodies"
-                      : tab === "modes"
-                        ? "Modes"
-                        : tab === "tools"
-                          ? "Tools"
-                          : "View"}
+                    {c.label}
                   </button>
                 ))}
               </nav>
-              {panel === "bodies" && (
-                <section aria-label="Body catalog">
-                  <nav
-                    className="control-strip mb-2 flex gap-1.5 overflow-x-auto"
-                    aria-label="Body categories"
+              <div className="body-picks">
+                {visibleMasses.map((mass) => (
+                  <button
+                    type="button"
+                    key={mass.id}
+                    aria-pressed={mass.id === state.massId && !state.multiLaunch}
+                    title={mass.hint}
+                    className={cn(
+                      "mass-button",
+                      mass.id === state.massId && !state.multiLaunch && "mass-button-selected",
+                    )}
+                    onClick={() => {
+                      state.setMassId(mass.id);
+                      close();
+                    }}
                   >
-                    {categories.map((c) => (
-                      <button
-                        type="button"
-                        key={c.id}
-                        aria-pressed={category === c.id}
-                        className={cn(
-                          "body-category",
-                          category === c.id && "body-category-selected",
-                        )}
-                        onClick={() => setCategory(c.id)}
-                      >
-                        {c.label}
-                      </button>
-                    ))}
-                  </nav>
-                  <div className="body-picks">
-                    {visibleMasses.map((mass) => (
-                      <button
-                        type="button"
-                        key={mass.id}
-                        aria-pressed={
-                          category === "mixed"
-                            ? multiMassIds.includes(mass.id)
-                            : mass.id === massId && !multiLaunch
-                        }
-                        title={
-                          sceneId === "milkyway"
-                            ? `${mass.hint} · Solar System mass scale`
-                            : `${mass.hint} · ${mass.mass} mass units`
-                        }
-                        className={cn(
-                          "mass-button",
-                          (category === "mixed"
-                            ? multiMassIds.includes(mass.id)
-                            : mass.id === massId && !multiLaunch) && "mass-button-selected",
-                        )}
-                        onClick={() =>
-                          category === "mixed" ? toggleMultiMassId(mass.id) : setMassId(mass.id)
-                        }
-                      >
-                        <span
-                          className="size-2.5 shrink-0 rounded-full"
-                          style={{ background: mass.color }}
-                          aria-hidden
-                        />
-                        {mass.label}
-                        {category === "mixed" && multiMassIds.includes(mass.id) && (
-                          <Check className="size-3" />
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                  {category === "mixed" && (
+                    <span
+                      className="size-2.5 shrink-0 rounded-full"
+                      style={{ background: mass.color }}
+                      aria-hidden
+                    />
+                    {mass.label}
+                  </button>
+                ))}
+              </div>
+              <div className="picker-divider">
+                <p className="text-xs text-muted mb-2">Launch style</p>
+                <div className="launch-style" aria-label="Launch style">
+                  <button
+                    type="button"
+                    aria-pressed={!state.orbitAssist}
+                    onClick={() => state.setOrbitAssist(false)}
+                  >
+                    Manual aim
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={state.orbitAssist}
+                    onClick={() => state.setOrbitAssist(true)}
+                  >
+                    <Orbit className="size-4" /> Orbit assist
+                  </button>
+                </div>
+                <p className="mt-2 text-xs leading-relaxed text-muted">
+                  Orbit assist gives taps a circular velocity around the largest body. Dragging
+                  still aims freely.
+                </p>
+              </div>
+              <details className="picker-divider">
+                <summary className="text-sm text-muted">Mixed launcher</summary>
+                <div className="body-picks my-2">
+                  {MASS_PRESETS.filter((m) => m.kind === "rock").map((mass) => (
                     <button
                       type="button"
+                      key={mass.id}
+                      aria-pressed={state.multiMassIds.includes(mass.id)}
+                      onClick={() => state.toggleMultiMassId(mass.id)}
                       className={cn(
-                        "scene-button mt-2",
-                        multiLaunch && "instrument-button-selected",
+                        "mass-button",
+                        state.multiMassIds.includes(mass.id) && "mass-button-selected",
                       )}
-                      aria-pressed={multiLaunch}
-                      onClick={toggleMultiLaunch}
                     >
-                      <Shuffle className="size-4" />
-                      {multiLaunch ? "Mixed launcher on" : "Launch selected types in rotation"}
+                      {mass.label}
+                      {state.multiMassIds.includes(mass.id) && <Check className="size-3" />}
                     </button>
-                  )}
-                </section>
-              )}
-              {panel === "modes" && (
-                <section aria-label="Simulation modes" className="space-y-3">
-                  <div className="body-picks">
-                    {COSMIC_MODES.map((mode) => (
-                      <button
-                        type="button"
-                        key={mode.id}
-                        title={mode.short}
-                        aria-pressed={sceneId === mode.id}
-                        onClick={() => apiRef.current?.loadScene(mode.id)}
-                        className={cn("mode-button", sceneId === mode.id && "mode-button-selected")}
-                      >
-                        {mode.label}
-                      </button>
-                    ))}
-                    {SCENES.map((scene) => (
-                      <button
-                        type="button"
-                        key={scene.id}
-                        aria-pressed={sceneId === scene.id}
-                        onClick={() => apiRef.current?.loadScene(scene.id)}
-                        className={cn(
-                          "scene-button",
-                          sceneId === scene.id && "instrument-button-selected",
-                        )}
-                      >
-                        {scene.label}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => apiRef.current?.loadScene(sceneId)}
-                    >
-                      <History className="size-4" />
-                      Restart mode
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      aria-pressed={challengingTasks}
-                      onClick={toggleChallengingTasks}
-                    >
-                      <FlaskConical className="size-4" />
-                      Challenges {challengingTasks ? "on" : "off"}
-                    </button>
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => setReportOpen(true)}
-                    >
-                      <ClipboardList className="size-4" />
-                      Contracts
-                    </button>
-                  </div>
-                </section>
-              )}
-              {panel === "tools" && (
-                <section aria-label="Instruments" className="space-y-2">
-                  <div className="body-picks">
-                    <InstrumentButton
-                      selected={instrument === "launch"}
-                      onClick={() => setInstrument("launch")}
-                      label="Launch"
-                    >
-                      <Orbit className="size-4" />
-                    </InstrumentButton>
-                    <InstrumentButton
-                      selected={instrument === "wormhole"}
-                      onClick={() => setInstrument("wormhole")}
-                      label="Wormhole"
-                    >
-                      <CircleDot className="size-4" />
-                    </InstrumentButton>
-                    <InstrumentButton
-                      selected={instrument === "nova"}
-                      onClick={() => setInstrument("nova")}
-                      label="Nova pulse"
-                    >
-                      <Sparkles className="size-4" />
-                    </InstrumentButton>
-                    <InstrumentButton
-                      selected={instrument === "gravityWell"}
-                      onClick={() => setInstrument("gravityWell")}
-                      label="Gravity well"
-                    >
-                      <Magnet className="size-4" />
-                    </InstrumentButton>
-                  </div>
-                  <p className="text-sm text-muted">
-                    {instrument === "wormhole"
-                      ? "Tap two points to connect them. Send bodies through the pair."
-                      : instrument === "nova"
-                        ? "Tap to send a shockwave through nearby bodies."
-                        : instrument === "gravityWell"
-                          ? "Tap to create a temporary pull and bend trajectories."
-                          : "Drag on the field to aim. The line predicts your trajectory."}
-                  </p>
-                  <div className="body-picks">
-                    <ToolButton onClick={() => apiRef.current?.undo()} label="Undo launch">
-                      <Undo2 className="size-4" />
-                    </ToolButton>
-                    <ToolButton
-                      onClick={() => apiRef.current?.rewind()}
-                      label={`Rewind ${rewindSeconds.toFixed(1)}s`}
-                    >
-                      <History className="size-4" />
-                    </ToolButton>
-                    <ToolButton onClick={() => apiRef.current?.replay()} label="Replay">
-                      <Play className="size-4" />
-                    </ToolButton>
-                    <ToolButton onClick={() => apiRef.current?.share()} label="Share">
-                      <Share2 className="size-4" />
-                    </ToolButton>
-                    <ToolButton onClick={() => apiRef.current?.clear()} label="Clear lab" danger>
-                      <Trash2 className="size-4" />
-                    </ToolButton>
-                  </div>
-                </section>
-              )}
-              {panel === "view" && (
-                <section aria-label="View and comfort settings" className="body-picks">
-                  <IconToggle pressed={trails} onClick={toggleTrails} label="Trails">
-                    <Spline className="size-4" />
-                  </IconToggle>
-                  <IconToggle pressed={fieldWorlds} onClick={toggleFieldWorlds} label="World field">
-                    <Magnet className="size-4" />
-                  </IconToggle>
-                  <IconToggle pressed={fieldHoles} onClick={toggleFieldHoles} label="Hole field">
-                    <CircleDot className="size-4" />
-                  </IconToggle>
-                  <IconToggle pressed={follow} onClick={toggleFollow} label="Follow">
-                    <Crosshair className="size-4" />
-                  </IconToggle>
-                  <IconToggle pressed={shake} onClick={toggleShake} label="Major-event shake">
-                    <Sparkles className="size-4" />
-                  </IconToggle>
-                  <IconToggle
-                    pressed={challengingTasks}
-                    onClick={toggleChallengingTasks}
-                    label="Challenges"
-                  >
-                    <FlaskConical className="size-4" />
-                  </IconToggle>
-                  <ToolButton onClick={toggleHud} label="Hide controls">
-                    <Eye className="size-4" />
-                  </ToolButton>
-                </section>
-              )}
-            </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="secondary-button w-full"
+                  onClick={() => {
+                    state.toggleMultiLaunch();
+                    close();
+                  }}
+                >
+                  <Shuffle className="size-4" />
+                  {state.multiLaunch ? "Disable mixed launcher" : "Use selected bodies in rotation"}
+                </button>
+              </details>
+            </section>,
           )}
-          <div className="mt-2 flex items-center gap-1.5">
-            <IconToggle pressed={paused} onClick={togglePaused} label={paused ? "Resume" : "Pause"}>
-              {paused ? <Play className="size-4" /> : <Pause className="size-4" />}
-            </IconToggle>
-            <label className="time-control min-w-0">
-              <span className="eyebrow shrink-0 hidden sm:inline">Time</span>
-              <input
-                type="range"
-                min={0.25}
-                max={6}
-                step={0.25}
-                value={timeScale}
-                onChange={(event) => setTimeScale(Number(event.target.value))}
-                className="lab-range h-11 w-full min-w-0"
-                aria-label="Time scale"
-              />
-              <span className="shrink-0 font-mono text-xs">{formatScale(timeScale)}</span>
-            </label>
-            <ToolButton onClick={() => apiRef.current?.zoom(1 / 1.3)} label="Zoom out">
-              <Minus className="size-4" />
-            </ToolButton>
-            <ToolButton onClick={() => apiRef.current?.zoom(1.3)} label="Zoom in">
-              <Plus className="size-4" />
-            </ToolButton>
-            <ToolButton onClick={() => apiRef.current?.recenter()} label="Recenter">
-              <LocateFixed className="size-4" />
-            </ToolButton>
-          </div>
+
+          {picker(
+            "tools",
+            "Instruments",
+            <button
+              type="button"
+              className={cn(
+                "dock-button dock-tools",
+                state.instrument !== "launch" && "dock-button-active",
+              )}
+              aria-label="Choose instrument"
+            >
+              <Magnet className="size-4" />
+              <span className="dock-button-label">Tools</span>
+            </button>,
+            <div className="instrument-picks">
+              {(
+                [
+                  ["launch", "Launch", "Drag to aim a body", Orbit],
+                  ["wormhole", "Wormhole", "Tap two points to fold space", CircleDot],
+                  ["nova", "Nova pulse", "Send a shockwave through the field", Sparkles],
+                  [
+                    "gravityWell",
+                    "Gravity well",
+                    "Bend trajectories with a temporary pull",
+                    Magnet,
+                  ],
+                ] as const
+              ).map(([id, label, description, Icon]) => (
+                <button
+                  type="button"
+                  key={id}
+                  aria-label={label}
+                  aria-pressed={state.instrument === id}
+                  className="instrument-pick"
+                  onClick={() => {
+                    state.setInstrument(id);
+                    close();
+                  }}
+                >
+                  <Icon className="size-5" />
+                  <span>
+                    <span className="block text-sm">{label}</span>
+                    <span className="text-xs text-muted">{description}</span>
+                  </span>
+                  {state.instrument === id && <Check className="ml-auto size-4" />}
+                </button>
+              ))}
+            </div>,
+          )}
+
+          {picker(
+            "events",
+            "Cosmic encounters",
+            <button
+              type="button"
+              className="dock-button dock-events"
+              aria-label="Add cosmic encounter"
+            >
+              <Sparkles className="size-4" />
+              <span className="dock-button-label">Events</span>
+            </button>,
+            <div className="space-y-3">
+              <p className="text-sm leading-relaxed text-muted">
+                Send a visitor through your current system. Redirect it with a well, a wormhole, or
+                a nova pulse.
+              </p>
+              <div className="instrument-picks">
+                {ENCOUNTERS.map((event) => (
+                  <button
+                    type="button"
+                    key={event.id}
+                    className="encounter-pick"
+                    disabled={state.bodyCount === 0 || state.encounter?.status === "active"}
+                    onClick={() => {
+                      apiRef.current?.encounter(event.id);
+                      close();
+                    }}
+                  >
+                    <span className="flex items-center justify-between text-sm">
+                      <span>{event.label}</span>
+                      <span className="text-xs text-muted">{event.duration}s</span>
+                    </span>
+                    <span className="mt-1 block text-xs leading-relaxed text-muted">
+                      {event.description}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {state.bodyCount === 0 && (
+                <p className="text-xs text-muted">Launch an anchor first, or choose a scene.</p>
+              )}
+              {state.encounter?.status === "active" && (
+                <p className="text-xs text-muted">
+                  Finish the current encounter before adding another.
+                </p>
+              )}
+              <p className="text-xs text-muted">
+                {state.challengingTasks
+                  ? "Optional goal: keep your original bodies intact until the timer ends."
+                  : "Free play · no survival goal"}
+              </p>
+            </div>,
+          )}
+
+          <span className="dock-separator" />
+          <button
+            type="button"
+            className="dock-play"
+            aria-label={state.paused ? "Resume" : "Pause"}
+            onClick={state.togglePaused}
+          >
+            {state.paused ? <Play className="size-4" /> : <Pause className="size-4" />}
+          </button>
+          {picker(
+            "speed",
+            "Simulation speed",
+            <button type="button" className="dock-speed" aria-label="Change simulation speed">
+              {formatScale(state.timeScale)}
+              <ChevronDown className="size-3" />
+            </button>,
+            <div className="space-y-3">
+              <div className="body-picks">
+                {[0.25, 0.5, 1, 2, 4, 6].map((speed) => (
+                  <button
+                    type="button"
+                    key={speed}
+                    className={cn(
+                      "body-category",
+                      speed === state.timeScale && "body-category-selected",
+                    )}
+                    aria-pressed={speed === state.timeScale}
+                    onClick={() => {
+                      state.setTimeScale(speed);
+                      close();
+                    }}
+                  >
+                    {formatScale(speed)}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-muted">Slow down a close pass or fast-forward an orbit.</p>
+            </div>,
+          )}
+          <button
+            type="button"
+            className="dock-button dock-undo"
+            aria-label="Undo launch"
+            title="Undo launch"
+            onClick={() => apiRef.current?.undo()}
+          >
+            <Undo2 className="size-4" />
+          </button>
+          {picker(
+            "more",
+            "More controls",
+            <button type="button" className="dock-button dock-more" aria-label="More controls">
+              <MoreHorizontal className="size-5" />
+            </button>,
+            <div className="space-y-3">
+              <div className="more-actions">
+                <ToolButton
+                  onClick={() => {
+                    apiRef.current?.rewind();
+                    close();
+                  }}
+                  label={`Rewind ${state.rewindSeconds.toFixed(1)}s`}
+                >
+                  <History className="size-4" />
+                </ToolButton>
+                <ToolButton
+                  onClick={() => {
+                    apiRef.current?.replay();
+                    close();
+                  }}
+                  label="Replay"
+                >
+                  <Play className="size-4" />
+                </ToolButton>
+                <ToolButton
+                  onClick={() => {
+                    apiRef.current?.share();
+                    close();
+                  }}
+                  label="Share"
+                >
+                  <Share2 className="size-4" />
+                </ToolButton>
+                <ToolButton
+                  onClick={() => {
+                    state.setReportOpen(true);
+                    close();
+                  }}
+                  label="Contracts"
+                >
+                  <ClipboardList className="size-4" />
+                </ToolButton>
+              </div>
+              <div className="more-settings picker-divider">
+                <IconToggle pressed={state.trails} onClick={state.toggleTrails} label="Trails">
+                  <Spline className="size-4" />
+                </IconToggle>
+                <IconToggle
+                  pressed={state.fieldWorlds}
+                  onClick={state.toggleFieldWorlds}
+                  label="World field"
+                >
+                  <Magnet className="size-4" />
+                </IconToggle>
+                <IconToggle
+                  pressed={state.fieldHoles}
+                  onClick={state.toggleFieldHoles}
+                  label="Hole field"
+                >
+                  <CircleDot className="size-4" />
+                </IconToggle>
+                <IconToggle pressed={state.follow} onClick={state.toggleFollow} label="Follow">
+                  <Crosshair className="size-4" />
+                </IconToggle>
+                <IconToggle pressed={state.sound} onClick={state.toggleSound} label="Sound">
+                  {state.sound ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
+                </IconToggle>
+                <IconToggle
+                  pressed={state.shake}
+                  onClick={state.toggleShake}
+                  label="Major-event shake"
+                >
+                  <Sparkles className="size-4" />
+                </IconToggle>
+                <IconToggle
+                  pressed={state.challengingTasks}
+                  onClick={state.toggleChallengingTasks}
+                  label="Challenges"
+                >
+                  <Orbit className="size-4" />
+                </IconToggle>
+              </div>
+              <div className="more-actions picker-divider">
+                <ToolButton
+                  onClick={() => {
+                    state.toggleHud();
+                    close();
+                  }}
+                  label="Hide controls"
+                >
+                  <Eye className="size-4" />
+                </ToolButton>
+                <ToolButton onClick={onExit} label="Game modes">
+                  <Home className="size-4" />
+                </ToolButton>
+                <ToolButton
+                  onClick={() => {
+                    apiRef.current?.clear();
+                    close();
+                  }}
+                  label="Clear lab"
+                  danger
+                >
+                  <Trash2 className="size-4" />
+                </ToolButton>
+              </div>
+              <p className="text-xs text-muted">
+                {state.galaxyStars > 0 ? `${state.galaxyStars} stars · ` : ""}
+                {state.bodyCount} bodies · Right-drag to pan · Scroll or pinch to zoom
+              </p>
+            </div>,
+          )}
         </div>
       </footer>
       <LabReport apiRef={apiRef} />
     </div>
+  );
+}
+
+function EncounterStatus() {
+  const encounter = useSimUi((s) => s.encounter);
+  const time = useSimUi((s) => s.worldTime);
+  const challenges = useSimUi((s) => s.challengingTasks);
+  if (!encounter) return null;
+  const event = ENCOUNTERS.find((e) => e.id === encounter.kind)!;
+  const remaining = Math.max(0, Math.ceil(encounter.endsAt - time));
+  return (
+    <aside className="encounter-status hud-panel" role="status" aria-label="Encounter status">
+      <p className="text-xs font-semibold">
+        {event.label}
+        <span className="ml-2 font-mono text-muted">
+          {encounter.status === "active" ? `${remaining}s` : "Complete"}
+        </span>
+      </p>
+      <p className="mt-1 text-xs text-muted">
+        {!challenges
+          ? "Visitor experiment"
+          : encounter.status === "active"
+            ? "Keep your original bodies intact"
+            : encounter.status === "intact"
+              ? "System preserved"
+              : "System changed · try another approach"}
+      </p>
+      {encounter.status === "active" && (
+        <progress
+          className="mission-progress mt-2"
+          max={event.duration}
+          value={event.duration - remaining}
+          aria-label="Encounter time elapsed"
+        />
+      )}
+    </aside>
   );
 }
 
@@ -522,18 +643,7 @@ const MODE_BRIEFS: Record<SceneId, string> = {
 function MissionCard({ apiRef }: { apiRef: MutableRefObject<SimApi | null> }) {
   const state = useSimUi();
   const [expanded, setExpanded] = useState(false);
-  useEffect(() => {
-    const desktop = window.matchMedia("(min-width: 1024px)");
-    const sync = () => setExpanded(desktop.matches);
-    sync();
-    desktop.addEventListener("change", sync);
-    return () => desktop.removeEventListener("change", sync);
-  }, []);
   const activeContract = contractById(state.activeContractId);
-  const label =
-    COSMIC_MODES.find((m) => m.id === state.sceneId)?.label ??
-    SCENES.find((m) => m.id === state.sceneId)?.label ??
-    "Field";
   const goals = fieldGoals(state);
   const done = state.objectivesComplete ? 3 : goals.filter((g) => g.value >= g.target).length;
   return (
@@ -551,7 +661,11 @@ function MissionCard({ apiRef }: { apiRef: MutableRefObject<SimApi | null> }) {
         onClick={() => setExpanded(!expanded)}
       >
         <span className="text-sm font-semibold">
-          {activeContract ? activeContract.title : label}
+          {activeContract
+            ? activeContract.title
+            : state.challengingTasks
+              ? "Field goals"
+              : "Scene guide"}
         </span>
         <span className="text-xs text-muted">
           {activeContract
@@ -639,30 +753,6 @@ function MissionCard({ apiRef }: { apiRef: MutableRefObject<SimApi | null> }) {
         </div>
       </div>
     </section>
-  );
-}
-
-function InstrumentButton({
-  selected,
-  onClick,
-  label,
-  children,
-}: {
-  selected: boolean;
-  onClick: () => void;
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      onClick={onClick}
-      className={cn("scene-button", selected && "instrument-button-selected")}
-    >
-      {children}
-      {label}
-    </button>
   );
 }
 

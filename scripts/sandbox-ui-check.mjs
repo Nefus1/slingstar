@@ -16,8 +16,6 @@ try {
     { width: 390, height: 844 },
   ]) {
     const page = await browser.newPage({ viewport });
-    // These existing external resources are unavailable under offline cloud QA.
-    // Local app requests remain untouched so asset/runtime failures still fail.
     await page.route("https://fonts.googleapis.com/**", (route) =>
       route.fulfill({ contentType: "text/css", body: "" }),
     );
@@ -31,60 +29,93 @@ try {
     });
     await page.goto(origin, { waitUntil: "networkidle" });
     await page.getByRole("button", { name: /Enter observatory/ }).click();
-    const footer = page.locator(".sandbox-controls");
-    await page.getByRole("button", { name: "Pause", exact: true }).click();
-    assert.equal(await footer.getByRole("button", { name: "Planet", exact: true }).count(), 1);
-    assert.equal(await footer.getByRole("button", { name: "Black hole", exact: true }).count(), 0);
-    await footer.getByRole("button", { name: "Stars & holes", exact: true }).click();
-    await footer.getByRole("button", { name: "Black hole", exact: true }).click();
-    assert.equal(
-      await footer
-        .getByRole("button", { name: "Black hole", exact: true })
-        .getAttribute("aria-pressed"),
-      "true",
-    );
-    await footer.getByRole("button", { name: "Small bodies", exact: true }).click();
-    await footer.getByRole("button", { name: "Comet", exact: true }).click();
-    await footer.getByRole("button", { name: "Tools", exact: true }).click();
-    await footer.getByRole("button", { name: "Wormhole", exact: true }).click();
+    const button = (name) => page.getByRole("button", { name, exact: true });
+    const picker = page.locator(".dock-picker");
+    const dock = page.locator(".launch-dock");
+    await button("Pause").click();
+    assert.equal(await picker.count(), 0);
+    const dockHeight = (await dock.boundingBox()).height;
+    assert.ok(dockHeight <= (viewport.width < 640 ? 120 : 72), `Dock too tall: ${dockHeight}`);
+    assert.equal(await button("Black hole").count(), 0);
+    await button("Choose launch body").click();
+    await button("Stars & holes").click();
+    await button("Black hole").click();
+    assert.equal(await picker.count(), 0, "Body selection should close its picker");
+    assert.equal(await button("Choose launch body").innerText(), "Black hole");
+    await button("Choose launch body").click();
+    await button("Small bodies").click();
+    await button("Comet").click();
+    await button("Choose instrument").click();
+    await button("Wormhole").click();
+    assert.equal(await picker.count(), 0, "Instrument selection should close its picker");
     const canvas = page.locator("main > canvas");
-    await canvas.click({ position: { x: viewport.width * 0.4, y: 250 } });
-    await canvas.click({ position: { x: viewport.width * 0.8, y: 250 } });
-    await footer.getByRole("button", { name: "Launch", exact: true }).click();
-    // Launch and undo exercise the real pointer/camera path on both devices.
-    const start = { x: viewport.width * 0.75, y: 320 };
+    await canvas.click({ position: { x: viewport.width * 0.4, y: 270 } });
+    await canvas.click({ position: { x: viewport.width * 0.8, y: 270 } });
+    const start = { x: viewport.width * 0.75, y: 350 };
     await page.mouse.move(start.x, start.y);
     await page.mouse.down();
     await page.mouse.move(start.x - 15, start.y + 25, { steps: 5 });
     await page.mouse.up();
-    await footer.getByRole("button", { name: "Undo launch", exact: true }).click();
-    await footer.getByRole("button", { name: "Modes", exact: true }).click();
-    await footer.getByRole("button", { name: "Milky Way", exact: true }).click();
-    await page.waitForTimeout(350);
-    await footer.getByRole("button", { name: "Bodies", exact: true }).click();
-    await footer.getByRole("button", { name: "Planets", exact: true }).click();
-    assert.equal(await footer.getByRole("button", { name: "Wormhole", exact: true }).count(), 0);
+    await button("Undo launch").click();
+    await button("Choose launch body").click();
+    await button("Orbit assist").focus();
+    await page.keyboard.press("Space");
+    assert.equal(
+      await page.locator(".dock-play").getAttribute("aria-label"),
+      "Resume",
+      "Keyboard picker selection should not also toggle simulation playback",
+    );
+    assert.equal(await button("Orbit assist").getAttribute("aria-pressed"), "true");
+    await button("Close Launch body").click();
+    assert.match(await page.locator(".dock-hint").innerText(), /Tap for an orbit/);
+    await canvas.click({ position: { x: viewport.width * 0.65, y: 320 } });
+    await button("Undo launch").click();
+    await button("Choose simulation mode").click();
+    await button("Milky Way").click();
+    assert.equal(await picker.count(), 0);
+    await page.waitForTimeout(200);
     const beforeZoom = await canvas.screenshot();
-    await footer.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await button("Zoom in").click();
     await page.waitForTimeout(100);
     const afterZoom = await canvas.screenshot();
     assert.equal(beforeZoom.equals(afterZoom), false);
-    await footer.getByRole("button", { name: "Recenter", exact: true }).click();
+    await button("Recenter").click();
     await page.screenshot({
       path: `/workspace/screenshots/apsis-solar-${label}-${viewport.width}.png`,
     });
-    await footer.getByRole("button", { name: "Collapse launch controls", exact: true }).click();
-    assert.equal(await footer.getByRole("button", { name: "Bodies", exact: true }).count(), 0);
-    await footer.getByRole("button", { name: "Expand launch controls", exact: true }).click();
-    await footer.getByRole("button", { name: "Modes", exact: true }).click();
-    const challengeButton = footer.getByRole("button", { name: "Challenges on", exact: true });
-    await challengeButton.click();
+    await button("Choose launch body").click();
+    await page.screenshot({
+      path: `/workspace/screenshots/apsis-picker-${label}-${viewport.width}.png`,
+    });
+    // Escape closes a modal picker and restores keyboard focus to its trigger.
+    await page.keyboard.press("Escape");
+    assert.equal(await picker.count(), 0);
     assert.equal(
-      await footer
-        .getByRole("button", { name: "Challenges off", exact: true })
-        .getAttribute("aria-pressed"),
-      "false",
+      await button("Choose launch body").evaluate((el) => el === document.activeElement),
+      true,
     );
+    await button("Add cosmic encounter").click();
+    await page.getByRole("button", { name: /^Comet train/ }).click();
+    await page.waitForTimeout(100);
+    assert.match(await page.getByLabel("Encounter status").innerText(), /Comet train/);
+    await button("Add cosmic encounter").click();
+    assert.equal(await page.getByRole("button", { name: /^Rogue planet/ }).isDisabled(), true);
+    await button("Close Cosmic encounters").click();
+    await button("Change simulation speed").click();
+    await button("6×").click();
+    await button("Resume").click();
+    await page.waitForFunction(
+      () => document.querySelector(".encounter-status")?.textContent.includes("Complete"),
+      { timeout: 15000 },
+    );
+    await button("Pause").click();
+    await page.screenshot({
+      path: `/workspace/screenshots/apsis-encounter-${label}-${viewport.width}.png`,
+    });
+    await button("More controls").click();
+    await button("Challenges").click();
+    assert.equal(await button("Challenges").getAttribute("aria-pressed"), "false");
+    await button("Close More controls").click();
     for (const mode of [
       "Galaxy Forge",
       "Planet Forge",
@@ -99,14 +130,16 @@ try {
       "Remix",
       "Empty",
     ]) {
-      await footer.getByRole("button", { name: mode, exact: true }).click();
-      await page.waitForTimeout(75);
-      assert.equal(
-        await footer.getByRole("button", { name: mode, exact: true }).getAttribute("aria-pressed"),
-        "true",
-      );
+      await button("Choose simulation mode").click();
+      await button(mode).click();
+      assert.equal(await picker.count(), 0);
+      assert.match(await button("Choose simulation mode").innerText(), new RegExp(mode));
     }
-    await footer.getByRole("button", { name: "Comet Storm", exact: true }).click();
+    await button("Add cosmic encounter").click();
+    assert.equal(await page.getByRole("button", { name: /^Comet train/ }).isDisabled(), true);
+    await button("Close Cosmic encounters").click();
+    await button("Choose simulation mode").click();
+    await button("Comet Storm").click();
     await page.screenshot({
       path: `/workspace/screenshots/apsis-storm-${label}-${viewport.width}.png`,
     });
@@ -117,24 +150,19 @@ try {
     assert.deepEqual(errors, []);
     await page.reload({ waitUntil: "networkidle" });
     await page.getByRole("button", { name: /Enter observatory/ }).click();
-    await page
-      .locator(".sandbox-controls")
-      .getByRole("button", { name: "Modes", exact: true })
-      .click();
-    assert.equal(
-      await page
-        .locator(".sandbox-controls")
-        .getByRole("button", { name: "Challenges off", exact: true })
-        .getAttribute("aria-pressed"),
-      "false",
-    );
+    await button("More controls").click();
+    assert.equal(await button("Challenges").getAttribute("aria-pressed"), "false");
     assert.deepEqual(errors, []);
     results.push({
       viewport,
+      dockHeight,
       modesChecked: 13,
       overflow,
       errors,
       launchAndUndo: true,
+      orbitAssist: true,
+      encounter: true,
+      focusRestored: true,
       zoom: true,
       savedChallengePreference: true,
     });

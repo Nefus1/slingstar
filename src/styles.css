@@ -980,33 +980,401 @@
   }
 }
 
-/* Sandbox controls expose one category at a time, keeping the field visible. */
-.sandbox-controls .launch-options { max-height: 32dvh; overflow-y: auto; }
-.control-tab { min-height: 44px; padding: 0 16px; border-radius: var(--radius-sm); color: var(--color-muted); font-size: 14px; }
-.control-tab-selected { color: var(--color-fg); background: var(--color-surface-2); box-shadow: inset 0 -2px var(--color-accent); }
-.body-category { min-height: 44px; padding: 0 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); color: var(--color-muted); font-size: 14px; }
-.body-category-selected { color: var(--color-fg); border-color: var(--color-accent); }
-.body-picks { display: flex; flex-wrap: wrap; gap: 6px; }
-.body-picks .mass-button { min-width: 0; }
-.control-label { display: none; }
-.launch-options .control-label { display: inline; }
-.mission-card { position: absolute; left: 12px; top: 104px; width: 272px; max-width: calc(100% - 24px); }
-.mission-heading { display: flex; width: 100%; min-height: 44px; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; text-align: left; }
-.mission-content { display: none; padding: 4px 16px 16px; max-height: 45dvh; overflow: auto; }
-.mission-card-expanded .mission-content { display: block; }
-.mission-card-expanded .mission-chevron { transform: rotate(180deg); }
-@media (min-width: 1024px) {
-  .mission-card { left: 20px; top: 112px; }
+/* Focused pickers leave the simulation visible until a control is needed. */
+.sandbox-header {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  right: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.dock-scene {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 12px;
+  color: var(--color-fg);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  pointer-events: auto;
+}
+.dock-score {
+  padding-right: 12px;
+}
+.sandbox-controls {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 24px);
+}
+.dock-hint {
+  text-align: center;
+  margin: 0 0 10px;
+}
+.launch-dock {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 8px;
+}
+.dock-body,
+.dock-button,
+.dock-play,
+.dock-speed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  min-width: 44px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  transition:
+    background 150ms,
+    color 150ms;
+}
+.dock-body {
+  justify-content: flex-start;
+  min-width: 136px;
+  padding: 0 12px;
+  background: var(--color-surface-2);
+}
+.body-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 12px currentColor;
+}
+.dock-body > svg {
+  margin-left: auto;
+}
+.dock-button {
+  padding: 0 12px;
+  color: var(--color-muted);
+}
+.dock-button:hover,
+.dock-speed:hover,
+.dock-button-active {
+  color: var(--color-fg);
+  background: var(--color-surface-2);
+}
+.dock-play {
+  background: var(--color-accent);
+  color: var(--color-bg);
+}
+.dock-speed {
+  padding: 0 8px;
+  font-family: var(--font-mono);
+  color: var(--color-fg);
+}
+.dock-separator {
+  width: 1px;
+  height: 24px;
+  background: var(--color-border);
+  margin: 0 6px;
+}
+.camera-dock {
+  position: absolute;
+  right: 20px;
+  bottom: 112px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dock-picker {
+  z-index: 60;
+  pointer-events: auto;
+  width: 360px;
+  max-width: calc(100vw - 24px);
+  max-height: min(62dvh, 540px);
+  padding: 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.picker-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -8px -8px 8px 0;
+}
+.picker-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+}
+.picker-close:hover {
+  background: var(--color-surface-2);
+  color: var(--color-fg);
+}
+.picker-categories {
+  display: flex;
+  gap: 4px;
+}
+.body-category {
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+  font-size: 13px;
+}
+.body-category-selected {
+  color: var(--color-fg);
+  border-color: var(--color-accent);
+}
+.body-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.body-picks .mass-button {
+  min-width: 0;
+}
+.picker-divider {
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+.picker-divider summary {
+  min-height: 44px;
+  line-height: 44px;
+  cursor: pointer;
+}
+.launch-style {
+  display: flex;
+  padding: 4px;
+  gap: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+}
+.launch-style button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex: 1;
+  min-height: 44px;
+  font-size: 13px;
+  border-radius: var(--radius-sm);
+  color: var(--color-muted);
+}
+.launch-style button[aria-pressed="true"] {
+  color: var(--color-fg);
+  background: var(--color-surface-2);
+}
+.scene-picks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.scene-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 76px;
+  padding: 12px;
+  text-align: left;
+  font-size: 13px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+.scene-pick-selected {
+  border-color: var(--color-accent);
+  background: var(--color-surface-2);
+}
+.instrument-picks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.instrument-pick {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  min-height: 64px;
+  border-radius: var(--radius-sm);
+  text-align: left;
+}
+.instrument-pick:hover,
+.instrument-pick[aria-pressed="true"],
+.encounter-pick:hover:not(:disabled) {
+  background: var(--color-surface-2);
+}
+.encounter-pick {
+  padding: 12px;
+  text-align: left;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+.encounter-pick:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.more-actions,
+.more-settings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.more-actions .tool-button,
+.more-settings .tool-button {
+  justify-content: flex-start;
+  min-height: 44px;
+  text-align: left;
+}
+.more-settings .tool-button[aria-pressed="true"]::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  margin-left: auto;
+}
+.control-label {
+  display: none;
+}
+.dock-picker .control-label {
+  display: inline;
+}
+.mission-card {
+  position: absolute;
+  left: 20px;
+  top: 80px;
+  width: 252px;
+  max-width: calc(100% - 24px);
+}
+.mission-heading {
+  display: flex;
+  width: 100%;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  text-align: left;
+}
+.mission-content {
+  display: none;
+  padding: 4px 16px 16px;
+  max-height: 45dvh;
+  overflow: auto;
+}
+.mission-card-expanded .mission-content {
+  display: block;
+}
+.mission-card-expanded .mission-chevron {
+  transform: rotate(180deg);
+}
+.encounter-status {
+  position: absolute;
+  left: 20px;
+  top: 136px;
+  padding: 12px;
+  width: 252px;
+  pointer-events: none;
+}
+.mission-card-expanded ~ .encounter-status {
+  display: none;
 }
 @media (max-width: 639px) {
-  .sandbox-controls .hud-panel { padding: 10px; }
-  .sandbox-controls .launch-options { max-height: 28dvh; }
-  .sandbox-controls .tool-button { padding-inline: 9px; }
-  .body-picks .mass-button { padding-inline: 10px; }
-  .discovery-notice { top: 156px; }
-  .mission-card-expanded ~ .discovery-notice { opacity: 0; }
-}
-@media (max-width: 639px) {
-  .sandbox-header > div:first-child .hud-panel { padding-inline: 10px; }
-  .sandbox-header a { white-space: nowrap; flex-shrink: 0; }
+  .sandbox-header {
+    top: 12px;
+    left: 12px;
+    right: 12px;
+  }
+  .sandbox-header h1 {
+    font-size: 26px;
+  }
+  .sandbox-header > div:first-child {
+    gap: 8px;
+  }
+  .dock-scene {
+    padding-inline: 10px;
+    max-width: 148px;
+  }
+  .sandbox-header a {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .sandbox-controls {
+    width: 340px;
+    bottom: max(16px, env(safe-area-inset-bottom));
+  }
+  .launch-dock {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .dock-body {
+    grid-column: 1 / 4;
+    grid-row: 1;
+    min-width: 0;
+  }
+  .dock-tools {
+    grid-column: 4;
+    grid-row: 1;
+  }
+  .dock-events {
+    grid-column: 5;
+    grid-row: 1;
+  }
+  .dock-more {
+    grid-column: 6;
+    grid-row: 1;
+  }
+  .dock-play {
+    grid-column: 1 / 3;
+    grid-row: 2;
+  }
+  .dock-speed {
+    grid-column: 3 / 5;
+    grid-row: 2;
+  }
+  .dock-undo {
+    grid-column: 5 / 7;
+    grid-row: 2;
+  }
+  .dock-separator { display: none; }
+  .dock-tools, .dock-events { flex-direction: column; gap: 2px; }
+  .dock-button-label { display: inline; font-size: 10px; }
+  .dock-button {
+    padding: 0;
+  }
+  .camera-dock {
+    right: 12px;
+    bottom: 162px;
+  }
+  .mission-card {
+    left: 12px;
+    top: 76px;
+    width: 232px;
+  }
+  .encounter-status {
+    left: 12px;
+    top: 132px;
+    width: 232px;
+  }
+  .discovery-notice {
+    top: 132px;
+  }
+  .mission-card-expanded ~ .discovery-notice {
+    opacity: 0;
+  }
+  .body-picks .mass-button {
+    padding-inline: 10px;
+  }
 }

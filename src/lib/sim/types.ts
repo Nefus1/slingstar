@@ -223,6 +223,16 @@ export type PhenomenonEvent = {
   bodyId?: number;
 };
 
+export type EncounterKind = "comets" | "rogue" | "stellar";
+export type CosmicEncounter = {
+  kind: EncounterKind;
+  startedAt: number;
+  endsAt: number;
+  protectedIds: number[];
+  visitorIds: number[];
+  status: "active" | "intact" | "changed";
+};
+
 export type ExperimentAction =
   | {
       type: "launch";
@@ -235,10 +245,12 @@ export type ExperimentAction =
     }
   | { type: "wormhole"; t: number; ax: number; ay: number; bx: number; by: number }
   | { type: "nova"; t: number; x: number; y: number }
-  | { type: "gravityWell"; t: number; x: number; y: number };
+  | { type: "gravityWell"; t: number; x: number; y: number }
+  | { type: "encounter"; t: number; kind: EncounterKind };
 
 export type World = {
   scene: SceneId;
+  encounter: CosmicEncounter | null;
   stormWave: number;
   nextEncounterAt: number;
   bodies: Body[];
