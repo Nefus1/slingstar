@@ -238,6 +238,9 @@ export type ExperimentAction =
   | { type: "gravityWell"; t: number; x: number; y: number };
 
 export type World = {
+  scene: SceneId;
+  stormWave: number;
+  nextEncounterAt: number;
   bodies: Body[];
   bursts: Burst[];
   sparks: Spark[];
@@ -253,6 +256,7 @@ export type World = {
   nextPhenomenonId: number;
   phenomenonSerial: number;
   lastPhenomenon: PhenomenonEvent | null;
+  pendingPhenomena: PhenomenonEvent[];
   fragmentSerial: number;
   timeline: TimelineEvent[];
   nextTimelineId: number;
@@ -329,7 +333,7 @@ export const SCENES: { id: SceneId; label: string }[] = [
 
 export const COSMIC_MODES: { id: SceneId; label: string; short: string }[] = [
   { id: "galaxy", label: "Galaxy Forge", short: "Form a living spiral" },
-  { id: "milkyway", label: "Milky Way", short: "Our barred spiral" },
+  { id: "milkyway", label: "Milky Way", short: "Explore the Sun and eight planets" },
   { id: "accretion", label: "Planet Forge", short: "Grow worlds from rubble" },
   { id: "cometStorm", label: "Comet Storm", short: "Survive the bombardment" },
   { id: "gargantua", label: "Gargantua", short: "Enter the photon ring" },

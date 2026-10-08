@@ -1,5 +1,9 @@
 import {
   Check,
+  ChevronDown,
+  ChevronUp,
+  Minus,
+  Plus,
   CircleDot,
   ClipboardList,
   Crosshair,
@@ -25,19 +29,19 @@ import { useEffect, useState, type MutableRefObject, type ReactNode } from "reac
 import { AuthChip } from "@/components/sim/auth-chip";
 import { LabReport } from "@/components/sim/lab-report";
 import type { SimApi } from "@/components/sim/orbit-canvas";
+import { fieldGoals } from "@/lib/sim/challenges";
 import { contractById } from "@/lib/sim/contracts";
-import {
-  COSMIC_MODES,
-  MASS_PRESETS,
-  PLANET_CATALOG_IDS,
-  QUICK_MASS_IDS,
-  SCENES,
-  type SceneId,
-} from "@/lib/sim/types";
+import { COSMIC_MODES, MASS_PRESETS, SCENES, type MassId, type SceneId } from "@/lib/sim/types";
 import { useSimUi, type DiscoveryToast as DiscoveryToastType } from "@/lib/sim/store";
 import { cn } from "@/lib/utils";
 
-export function Hud({ apiRef, onExit }: { apiRef: MutableRefObject<SimApi | null>; onExit: () => void }) {
+export function Hud({
+  apiRef,
+  onExit,
+}: {
+  apiRef: MutableRefObject<SimApi | null>;
+  onExit: () => void;
+}) {
   const massId = useSimUi((s) => s.massId);
   const multiMassIds = useSimUi((s) => s.multiMassIds);
   const multiLaunch = useSimUi((s) => s.multiLaunch);
@@ -50,21 +54,13 @@ export function Hud({ apiRef, onExit }: { apiRef: MutableRefObject<SimApi | null
   const follow = useSimUi((s) => s.follow);
   const bodyCount = useSimUi((s) => s.bodyCount);
   const galaxyStars = useSimUi((s) => s.galaxyStars);
-  const galaxyFormation = useSimUi((s) => s.galaxyFormation);
   const sceneId = useSimUi((s) => s.sceneId);
   const score = useSimUi((s) => s.score);
-  const streak = useSimUi((s) => s.streak);
+  const objectivesComplete = useSimUi((s) => s.objectivesComplete);
   const sound = useSimUi((s) => s.sound);
   const hudHidden = useSimUi((s) => s.hudHidden);
   const reportOpen = useSimUi((s) => s.reportOpen);
   const rewindSeconds = useSimUi((s) => s.rewindSeconds);
-  const activeContractId = useSimUi((s) => s.activeContractId);
-  const contractStatus = useSimUi((s) => s.contractStatus);
-  const contractProgress = useSimUi((s) => s.contractProgress);
-  const completedContracts = useSimUi((s) => s.completedContracts);
-  const captures = useSimUi((s) => s.captures);
-  const closeCalls = useSimUi((s) => s.closeCalls);
-  const merges = useSimUi((s) => s.merges);
   const lastDiscovery = useSimUi((s) => s.lastDiscovery);
   const setMassId = useSimUi((s) => s.setMassId);
   const toggleMultiMassId = useSimUi((s) => s.toggleMultiMassId);
@@ -80,7 +76,13 @@ export function Hud({ apiRef, onExit }: { apiRef: MutableRefObject<SimApi | null
   const toggleHud = useSimUi((s) => s.toggleHud);
   const setReportOpen = useSimUi((s) => s.setReportOpen);
   const hydrateProfile = useSimUi((s) => s.hydrateProfile);
-  const [catalogOpen, setCatalogOpen] = useState(false);
+  const challengingTasks = useSimUi((s) => s.challengingTasks);
+  const toggleChallengingTasks = useSimUi((s) => s.toggleChallengingTasks);
+  const shake = useSimUi((s) => s.shake);
+  const toggleShake = useSimUi((s) => s.toggleShake);
+  const [panel, setPanel] = useState<"bodies" | "modes" | "tools" | "view">("bodies");
+  const [category, setCategory] = useState("worlds");
+  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => hydrateProfile(), [hydrateProfile]);
 
@@ -90,7 +92,9 @@ export function Hud({ apiRef, onExit }: { apiRef: MutableRefObject<SimApi | null
   if (hudHidden) {
     return (
       <div className="pointer-events-none absolute inset-0 z-20">
-        {showDiscovery && lastDiscovery && <DiscoveryToast key={lastDiscovery.id} toast={lastDiscovery} />}
+        {showDiscovery && lastDiscovery && (
+          <DiscoveryToast key={lastDiscovery.id} toast={lastDiscovery} />
+        )}
         <button
           type="button"
           className="secondary-button pointer-events-auto absolute bottom-14 right-3 shadow-panel sm:bottom-5 sm:right-5"
@@ -103,15 +107,28 @@ export function Hud({ apiRef, onExit }: { apiRef: MutableRefObject<SimApi | null
     );
   }
 
-  const goalCount = [captures, closeCalls, merges].filter((n) => n > 0).length;
-  const activeContract = contractById(activeContractId);
-  const cosmicMode = COSMIC_MODES.find((mode) => mode.id === sceneId);
-  const quickMasses = MASS_PRESETS.filter((mass) => QUICK_MASS_IDS.includes(mass.id));
-  const catalogMasses = MASS_PRESETS.filter((mass) => PLANET_CATALOG_IDS.includes(mass.id));
+  const categories: { id: string; label: string; ids: MassId[] }[] = [
+    { id: "rocks", label: "Small bodies", ids: ["dust", "asteroid", "comet", "moon"] },
+    {
+      id: "worlds",
+      label: "Planets",
+      ids: ["planet", "ocean", "desert", "ice", "lava", "giant", "ringed"],
+    },
+    { id: "stars", label: "Stars & holes", ids: ["star", "redGiant", "blackHole", "smbh"] },
+    {
+      id: "mixed",
+      label: "Mixed",
+      ids: ["moon", "planet", "ocean", "desert", "ice", "lava", "giant", "ringed"],
+    },
+  ];
+  const selectedPreset = MASS_PRESETS.find((m) => m.id === massId)!;
+  const visibleMasses = MASS_PRESETS.filter((m) =>
+    categories.find((c) => c.id === category)!.ids.includes(m.id),
+  );
 
   return (
     <div className="pointer-events-none absolute inset-0 z-20 flex flex-col justify-between p-3 pb-14 sm:p-5">
-      <header className="flex items-start justify-between gap-2">
+      <header className="sandbox-header flex items-start justify-between gap-2">
         <div className="flex items-start gap-2">
           <div className="hud-panel pointer-events-auto px-4 py-3">
             <div className="flex items-baseline gap-2">
@@ -140,7 +157,11 @@ export function Hud({ apiRef, onExit }: { apiRef: MutableRefObject<SimApi | null
           <IconButton label={sound ? "Mute sound" : "Enable sound"} onClick={toggleSound}>
             {sound ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
           </IconButton>
-          <IconButton label="Open field notes" onClick={() => setReportOpen(true)} badge={goalCount < 3}>
+          <IconButton
+            label="Open field notes"
+            onClick={() => setReportOpen(true)}
+            badge={challengingTasks && !objectivesComplete}
+          >
             <ClipboardList className="size-4" />
           </IconButton>
           <div className="hidden sm:block">
@@ -152,140 +173,304 @@ export function Hud({ apiRef, onExit }: { apiRef: MutableRefObject<SimApi | null
         </div>
       </header>
 
-      <MissionCard
-        captures={captures}
-        closeCalls={closeCalls}
-        merges={merges}
-        activeContract={activeContract}
-        contractStatus={contractStatus}
-        contractProgress={contractProgress}
-        mode={cosmicMode}
-        galaxyStars={galaxyStars}
-        galaxyFormation={galaxyFormation}
-        bodyCount={bodyCount}
-        apiRef={apiRef}
-      />
-      <div className="pointer-events-none absolute left-1/2 top-24 -translate-x-1/2 sm:hidden">
-        <button
-          type="button"
-          onClick={() => setReportOpen(true)}
-          className="pointer-events-auto inline-flex min-h-11 items-center gap-2 rounded-full border border-border bg-surface/90 px-4 text-xs font-medium text-fg shadow-panel backdrop-blur-sm"
-        >
-          <FlaskConical className="size-4 text-muted" />
-          {activeContract
-            ? `${activeContract.title} · ${Math.floor(contractProgress)}/${activeContract.target}`
-            : cosmicMode
-              ? cosmicMode.label
-              : `Contracts · ${completedContracts.length}/12`}
-        </button>
-      </div>
+      <MissionCard apiRef={apiRef} />
 
-      {showDiscovery && lastDiscovery && <DiscoveryToast key={lastDiscovery.id} toast={lastDiscovery} />}
+      {showDiscovery && lastDiscovery && (
+        <DiscoveryToast key={lastDiscovery.id} toast={lastDiscovery} />
+      )}
 
-      <footer className="pointer-events-auto mx-auto w-full max-w-6xl">
-        <div className="hud-panel p-2.5 sm:p-3.5">
-          <div className="mb-2.5 flex items-center justify-between gap-3 px-1">
-            <div className="flex items-center gap-3">
-              <p className="eyebrow">Launch body</p>
-              <span className="hidden font-mono text-xs tabular-nums text-muted sm:inline">
-                {streak > 1 ? `${streak}× discovery streak` : "Aim with the predicted path"}
-              </span>
+      <footer className="sandbox-controls pointer-events-auto mx-auto w-full max-w-5xl">
+        <div className="hud-panel p-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="eyebrow">
+                {instrument === "launch" ? "Launch body" : "Place instrument"}
+              </p>
+              <p className="mt-1 truncate text-sm text-fg">
+                {instrument === "launch"
+                  ? multiLaunch
+                    ? `Mixed launcher · ${multiMassIds.length} types`
+                    : selectedPreset.label
+                  : instrument === "nova"
+                    ? "Nova pulse"
+                    : instrument === "gravityWell"
+                      ? "Gravity well"
+                      : "Wormhole"}{" "}
+                <span className="text-muted">
+                  · {instrument === "launch" ? "drag to aim" : "tap to place"}
+                </span>
+              </p>
             </div>
-            <div className="flex items-center gap-2">
-              <span className="font-mono text-xs tabular-nums text-muted sm:hidden">{formatScore(score)}</span>
-              <span className="font-mono text-xs tabular-nums text-muted">
-                {galaxyStars > 0 ? `${galaxyStars} stars · ` : ""}{bodyCount} {bodyCount === 1 ? "body" : "bodies"}
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="hidden font-mono text-xs text-muted sm:block">
+                {galaxyStars > 0 ? `${galaxyStars} stars · ` : ""}
+                {bodyCount} bodies
               </span>
+              <IconButton
+                label={collapsed ? "Expand launch controls" : "Collapse launch controls"}
+                onClick={() => setCollapsed(!collapsed)}
+              >
+                {collapsed ? <ChevronUp className="size-4" /> : <ChevronDown className="size-4" />}
+              </IconButton>
             </div>
           </div>
-
-          <div className="control-strip flex flex-nowrap gap-1.5 overflow-x-auto pb-1">
-            <button
-              type="button"
-              aria-expanded={catalogOpen}
-              onClick={() => setCatalogOpen((open) => !open)}
-              className={cn("mass-button", catalogOpen && "mass-button-selected")}
-            >
-              <FlaskConical className="size-3.5" />
-              World catalog
-            </button>
-            {quickMasses.map((mass) => {
-              const selected = mass.id === massId && !multiLaunch;
-              return (
-                <button
-                  key={mass.id}
-                  type="button"
-                  aria-pressed={selected}
-                  title={`${mass.label}: ${mass.hint}`}
-                  onClick={() => setMassId(mass.id)}
-                  className={cn("mass-button", selected && "mass-button-selected")}
-                >
-                  <span className="size-2.5 rounded-full" style={{ background: mass.color }} aria-hidden />
-                  {mass.label}
-                </button>
-              );
-            })}
-            <button
-              type="button"
-              aria-pressed={multiLaunch}
-              onClick={toggleMultiLaunch}
-              className={cn("mass-button", multiLaunch && "mass-button-selected")}
-              title="Cycle through every checked world type on successive launches"
-            >
-              <Shuffle className="size-3.5" />
-              Mixed ×{multiMassIds.length}
-            </button>
-          </div>
-
-          {catalogOpen && (
-            <div className="planet-catalog mt-2.5">
-              <div className="flex items-center justify-between gap-3 px-1 pb-2">
-                <div>
-                  <p className="eyebrow">World catalog</p>
-                  <p className="mt-1 text-xs text-muted">Choose one to launch, or check several for the mixed launcher.</p>
-                </div>
-                <button type="button" onClick={toggleMultiLaunch} className={cn("scene-button", multiLaunch && "instrument-button-selected")}> 
-                  <Shuffle className="size-3.5" />
-                  {multiLaunch ? "Cycling worlds" : "Use checked"}
-                </button>
-              </div>
-              <div className="planet-catalog-grid lab-scroll">
-                {catalogMasses.map((mass) => {
-                  const checked = multiMassIds.includes(mass.id);
-                  const singleSelected = mass.id === massId && !multiLaunch;
-                  return (
-                    <div key={mass.id} className="planet-catalog-item">
+          {!collapsed && (
+            <div className="launch-options lab-scroll">
+              <nav
+                className="control-strip my-2 flex gap-1.5 overflow-x-auto"
+                aria-label="Sandbox control categories"
+              >
+                {(["bodies", "modes", "tools", "view"] as const).map((tab) => (
+                  <button
+                    type="button"
+                    key={tab}
+                    aria-pressed={panel === tab}
+                    className={cn("control-tab", panel === tab && "control-tab-selected")}
+                    onClick={() => setPanel(tab)}
+                  >
+                    {tab === "bodies"
+                      ? "Bodies"
+                      : tab === "modes"
+                        ? "Modes"
+                        : tab === "tools"
+                          ? "Tools"
+                          : "View"}
+                  </button>
+                ))}
+              </nav>
+              {panel === "bodies" && (
+                <section aria-label="Body catalog">
+                  <nav
+                    className="control-strip mb-2 flex gap-1.5 overflow-x-auto"
+                    aria-label="Body categories"
+                  >
+                    {categories.map((c) => (
                       <button
                         type="button"
-                        onClick={() => setMassId(mass.id)}
-                        className={cn("planet-catalog-main", singleSelected && "planet-catalog-main-selected")}
+                        key={c.id}
+                        aria-pressed={category === c.id}
+                        className={cn(
+                          "body-category",
+                          category === c.id && "body-category-selected",
+                        )}
+                        onClick={() => setCategory(c.id)}
                       >
-                        <span className="catalog-planet" style={{ background: mass.color }} aria-hidden />
-                        <span className="min-w-0 text-left">
-                          <span className="block truncate text-sm font-medium">{mass.label}</span>
-                          <span className="block truncate text-[0.68rem] text-muted">{mass.hint} · {Math.round(mass.mass)} m</span>
-                        </span>
+                        {c.label}
                       </button>
+                    ))}
+                  </nav>
+                  <div className="body-picks">
+                    {visibleMasses.map((mass) => (
                       <button
                         type="button"
-                        aria-pressed={checked}
-                        aria-label={`${checked ? "Remove" : "Add"} ${mass.label} ${checked ? "from" : "to"} mixed launcher`}
-                        title={`${checked ? "Remove from" : "Add to"} mixed launcher`}
-                        onClick={() => toggleMultiMassId(mass.id)}
-                        className={cn("catalog-check", checked && "catalog-check-selected")}
+                        key={mass.id}
+                        aria-pressed={
+                          category === "mixed"
+                            ? multiMassIds.includes(mass.id)
+                            : mass.id === massId && !multiLaunch
+                        }
+                        title={
+                          sceneId === "milkyway"
+                            ? `${mass.hint} · Solar System mass scale`
+                            : `${mass.hint} · ${mass.mass} mass units`
+                        }
+                        className={cn(
+                          "mass-button",
+                          (category === "mixed"
+                            ? multiMassIds.includes(mass.id)
+                            : mass.id === massId && !multiLaunch) && "mass-button-selected",
+                        )}
+                        onClick={() =>
+                          category === "mixed" ? toggleMultiMassId(mass.id) : setMassId(mass.id)
+                        }
                       >
-                        <Check className="size-3.5" />
+                        <span
+                          className="size-2.5 shrink-0 rounded-full"
+                          style={{ background: mass.color }}
+                          aria-hidden
+                        />
+                        {mass.label}
+                        {category === "mixed" && multiMassIds.includes(mass.id) && (
+                          <Check className="size-3" />
+                        )}
                       </button>
-                    </div>
-                  );
-                })}
-              </div>
+                    ))}
+                  </div>
+                  {category === "mixed" && (
+                    <button
+                      type="button"
+                      className={cn(
+                        "scene-button mt-2",
+                        multiLaunch && "instrument-button-selected",
+                      )}
+                      aria-pressed={multiLaunch}
+                      onClick={toggleMultiLaunch}
+                    >
+                      <Shuffle className="size-4" />
+                      {multiLaunch ? "Mixed launcher on" : "Launch selected types in rotation"}
+                    </button>
+                  )}
+                </section>
+              )}
+              {panel === "modes" && (
+                <section aria-label="Simulation modes" className="space-y-3">
+                  <div className="body-picks">
+                    {COSMIC_MODES.map((mode) => (
+                      <button
+                        type="button"
+                        key={mode.id}
+                        title={mode.short}
+                        aria-pressed={sceneId === mode.id}
+                        onClick={() => apiRef.current?.loadScene(mode.id)}
+                        className={cn("mode-button", sceneId === mode.id && "mode-button-selected")}
+                      >
+                        {mode.label}
+                      </button>
+                    ))}
+                    {SCENES.map((scene) => (
+                      <button
+                        type="button"
+                        key={scene.id}
+                        aria-pressed={sceneId === scene.id}
+                        onClick={() => apiRef.current?.loadScene(scene.id)}
+                        className={cn(
+                          "scene-button",
+                          sceneId === scene.id && "instrument-button-selected",
+                        )}
+                      >
+                        {scene.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => apiRef.current?.loadScene(sceneId)}
+                    >
+                      <History className="size-4" />
+                      Restart mode
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      aria-pressed={challengingTasks}
+                      onClick={toggleChallengingTasks}
+                    >
+                      <FlaskConical className="size-4" />
+                      Challenges {challengingTasks ? "on" : "off"}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => setReportOpen(true)}
+                    >
+                      <ClipboardList className="size-4" />
+                      Contracts
+                    </button>
+                  </div>
+                </section>
+              )}
+              {panel === "tools" && (
+                <section aria-label="Instruments" className="space-y-2">
+                  <div className="body-picks">
+                    <InstrumentButton
+                      selected={instrument === "launch"}
+                      onClick={() => setInstrument("launch")}
+                      label="Launch"
+                    >
+                      <Orbit className="size-4" />
+                    </InstrumentButton>
+                    <InstrumentButton
+                      selected={instrument === "wormhole"}
+                      onClick={() => setInstrument("wormhole")}
+                      label="Wormhole"
+                    >
+                      <CircleDot className="size-4" />
+                    </InstrumentButton>
+                    <InstrumentButton
+                      selected={instrument === "nova"}
+                      onClick={() => setInstrument("nova")}
+                      label="Nova pulse"
+                    >
+                      <Sparkles className="size-4" />
+                    </InstrumentButton>
+                    <InstrumentButton
+                      selected={instrument === "gravityWell"}
+                      onClick={() => setInstrument("gravityWell")}
+                      label="Gravity well"
+                    >
+                      <Magnet className="size-4" />
+                    </InstrumentButton>
+                  </div>
+                  <p className="text-sm text-muted">
+                    {instrument === "wormhole"
+                      ? "Tap two points to connect them. Send bodies through the pair."
+                      : instrument === "nova"
+                        ? "Tap to send a shockwave through nearby bodies."
+                        : instrument === "gravityWell"
+                          ? "Tap to create a temporary pull and bend trajectories."
+                          : "Drag on the field to aim. The line predicts your trajectory."}
+                  </p>
+                  <div className="body-picks">
+                    <ToolButton onClick={() => apiRef.current?.undo()} label="Undo launch">
+                      <Undo2 className="size-4" />
+                    </ToolButton>
+                    <ToolButton
+                      onClick={() => apiRef.current?.rewind()}
+                      label={`Rewind ${rewindSeconds.toFixed(1)}s`}
+                    >
+                      <History className="size-4" />
+                    </ToolButton>
+                    <ToolButton onClick={() => apiRef.current?.replay()} label="Replay">
+                      <Play className="size-4" />
+                    </ToolButton>
+                    <ToolButton onClick={() => apiRef.current?.share()} label="Share">
+                      <Share2 className="size-4" />
+                    </ToolButton>
+                    <ToolButton onClick={() => apiRef.current?.clear()} label="Clear lab" danger>
+                      <Trash2 className="size-4" />
+                    </ToolButton>
+                  </div>
+                </section>
+              )}
+              {panel === "view" && (
+                <section aria-label="View and comfort settings" className="body-picks">
+                  <IconToggle pressed={trails} onClick={toggleTrails} label="Trails">
+                    <Spline className="size-4" />
+                  </IconToggle>
+                  <IconToggle pressed={fieldWorlds} onClick={toggleFieldWorlds} label="World field">
+                    <Magnet className="size-4" />
+                  </IconToggle>
+                  <IconToggle pressed={fieldHoles} onClick={toggleFieldHoles} label="Hole field">
+                    <CircleDot className="size-4" />
+                  </IconToggle>
+                  <IconToggle pressed={follow} onClick={toggleFollow} label="Follow">
+                    <Crosshair className="size-4" />
+                  </IconToggle>
+                  <IconToggle pressed={shake} onClick={toggleShake} label="Major-event shake">
+                    <Sparkles className="size-4" />
+                  </IconToggle>
+                  <IconToggle
+                    pressed={challengingTasks}
+                    onClick={toggleChallengingTasks}
+                    label="Challenges"
+                  >
+                    <FlaskConical className="size-4" />
+                  </IconToggle>
+                  <ToolButton onClick={toggleHud} label="Hide controls">
+                    <Eye className="size-4" />
+                  </ToolButton>
+                </section>
+              )}
             </div>
           )}
-
-          <div className="mt-2.5 flex flex-col gap-2.5 sm:flex-row sm:items-center">
-            <label className="time-control">
-              <span className="eyebrow shrink-0">Time</span>
+          <div className="mt-2 flex items-center gap-1.5">
+            <IconToggle pressed={paused} onClick={togglePaused} label={paused ? "Resume" : "Pause"}>
+              {paused ? <Play className="size-4" /> : <Pause className="size-4" />}
+            </IconToggle>
+            <label className="time-control min-w-0">
+              <span className="eyebrow shrink-0 hidden sm:inline">Time</span>
               <input
                 type="range"
                 min={0.25}
@@ -293,97 +478,20 @@ export function Hud({ apiRef, onExit }: { apiRef: MutableRefObject<SimApi | null
                 step={0.25}
                 value={timeScale}
                 onChange={(event) => setTimeScale(Number(event.target.value))}
-                className="lab-range h-11 w-full cursor-pointer"
+                className="lab-range h-11 w-full min-w-0"
                 aria-label="Time scale"
-                suppressHydrationWarning
               />
-              <span className="w-10 shrink-0 text-right font-mono text-xs tabular-nums text-fg">
-                {formatScale(timeScale)}
-              </span>
+              <span className="shrink-0 font-mono text-xs">{formatScale(timeScale)}</span>
             </label>
-
-            <div className="control-strip flex flex-nowrap gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-              <IconToggle pressed={paused} onClick={togglePaused} label={paused ? "Resume" : "Pause"}>
-                {paused ? <Play className="size-4" /> : <Pause className="size-4" />}
-              </IconToggle>
-              <IconToggle pressed={trails} onClick={toggleTrails} label="Trails">
-                <Spline className="size-4" />
-              </IconToggle>
-              <IconToggle pressed={fieldWorlds} onClick={toggleFieldWorlds} label="World field">
-                <Magnet className="size-4" />
-              </IconToggle>
-              <IconToggle pressed={fieldHoles} onClick={toggleFieldHoles} label="Hole field">
-                <CircleDot className="size-4" />
-              </IconToggle>
-              <IconToggle pressed={follow} onClick={toggleFollow} label="Follow">
-                <Crosshair className="size-4" />
-              </IconToggle>
-              <ToolButton onClick={() => apiRef.current?.undo()} label="Undo launch">
-                <Undo2 className="size-4" />
-              </ToolButton>
-              <ToolButton onClick={() => apiRef.current?.rewind()} label={`Rewind ${rewindSeconds.toFixed(1)} seconds`}>
-                <History className="size-4" />
-              </ToolButton>
-              <ToolButton onClick={() => apiRef.current?.recenter()} label="Recenter">
-                <LocateFixed className="size-4" />
-              </ToolButton>
-              <ToolButton onClick={() => apiRef.current?.clear()} label="Clear lab" danger>
-                <Trash2 className="size-4" />
-              </ToolButton>
-            </div>
-          </div>
-
-          <div className="control-strip mt-2.5 flex items-center gap-1.5 overflow-x-auto pb-1">
-            <span className="eyebrow mr-1 hidden shrink-0 px-1 md:inline">Cosmic modes</span>
-            {COSMIC_MODES.map((mode) => (
-              <button
-                key={mode.id}
-                type="button"
-                title={mode.short}
-                onClick={() => apiRef.current?.loadScene(mode.id)}
-                className={cn("mode-button", sceneId === mode.id && "mode-button-selected")}
-              >
-                {mode.id === "galaxy" && <Sparkles className="size-3.5" />}
-                {mode.id === "gargantua" && <CircleDot className="size-3.5" />}
-                {mode.id === "cometStorm" && <Orbit className="size-3.5" />}
-                {mode.label}
-              </button>
-            ))}
-            {sceneId === "galaxy" && (
-              <button type="button" onClick={() => apiRef.current?.reformGalaxy()} className="scene-button">
-                <History className="size-3.5" />
-                Re-form
-              </button>
-            )}
-          </div>
-
-          <div className="control-strip mt-2 flex items-center gap-1.5 overflow-x-auto pb-1">
-            <span className="eyebrow mr-1 hidden shrink-0 px-1 md:inline">Instruments</span>
-            <InstrumentButton selected={instrument === "launch"} onClick={() => setInstrument("launch")} label="Launch">
-              <Orbit className="size-3.5" />
-            </InstrumentButton>
-            <InstrumentButton selected={instrument === "wormhole"} onClick={() => setInstrument("wormhole")} label="Wormhole">
-              <CircleDot className="size-3.5" />
-            </InstrumentButton>
-            <InstrumentButton selected={instrument === "nova"} onClick={() => setInstrument("nova")} label="Nova pulse">
-              <Sparkles className="size-3.5" />
-            </InstrumentButton>
-            <InstrumentButton selected={instrument === "gravityWell"} onClick={() => setInstrument("gravityWell")} label="Gravity well">
-              <Magnet className="size-3.5" />
-            </InstrumentButton>
-            <span className="mx-1 h-6 w-px shrink-0 bg-border" aria-hidden />
-            <span className="eyebrow mr-1 hidden shrink-0 px-1 md:inline">Scenes</span>
-            {SCENES.map((scene) => (
-              <button
-                key={scene.id}
-                type="button"
-                onClick={() => apiRef.current?.loadScene(scene.id)}
-                className={cn("scene-button", sceneId === scene.id && "instrument-button-selected")}
-              >
-                {scene.id === "remix" && <Shuffle className="size-3.5" />}
-                {scene.label}
-              </button>
-            ))}
+            <ToolButton onClick={() => apiRef.current?.zoom(1 / 1.3)} label="Zoom out">
+              <Minus className="size-4" />
+            </ToolButton>
+            <ToolButton onClick={() => apiRef.current?.zoom(1.3)} label="Zoom in">
+              <Plus className="size-4" />
+            </ToolButton>
+            <ToolButton onClick={() => apiRef.current?.recenter()} label="Recenter">
+              <LocateFixed className="size-4" />
+            </ToolButton>
           </div>
         </div>
       </footer>
@@ -392,105 +500,144 @@ export function Hud({ apiRef, onExit }: { apiRef: MutableRefObject<SimApi | null
   );
 }
 
-function MissionCard({
-  captures,
-  closeCalls,
-  merges,
-  activeContract,
-  contractStatus,
-  contractProgress,
-  mode,
-  galaxyStars,
-  galaxyFormation,
-  bodyCount,
-  apiRef,
-}: {
-  captures: number;
-  closeCalls: number;
-  merges: number;
-  activeContract: ReturnType<typeof contractById>;
-  contractStatus: "idle" | "active" | "complete" | "failed";
-  contractProgress: number;
-  mode: { id: SceneId; label: string; short: string } | undefined;
-  galaxyStars: number;
-  galaxyFormation: number;
-  bodyCount: number;
-  apiRef: MutableRefObject<SimApi | null>;
-}) {
-  if (activeContract) {
-    return (
-      <section className="hud-panel pointer-events-auto absolute left-5 top-28 hidden w-72 p-4 lg:block">
-        <div className="flex items-center justify-between gap-3">
-          <p className="eyebrow">Contract {activeContract.number}</p>
-          <span className={cn("text-xs capitalize", contractStatus === "failed" ? "text-danger" : "text-muted")}>{contractStatus}</span>
-        </div>
-        <h2 className="mt-3 text-sm font-semibold text-fg">{activeContract.title}</h2>
-        <p className="mt-1.5 text-xs leading-relaxed text-muted">{activeContract.objective}</p>
-        <progress className="mission-progress mt-4" value={contractProgress} max={activeContract.target} aria-label={`${contractProgress} of ${activeContract.target}`} />
-        <div className="mt-2 flex items-center justify-between font-mono text-xs tabular-nums text-muted">
-          <span>{Math.floor(contractProgress)} / {activeContract.target}</span>
-          <span>{activeContract.difficulty}</span>
-        </div>
-      </section>
-    );
-  }
-  if (mode) {
-    const detail = mode.id === "galaxy"
-      ? "A diffuse stellar cloud is condensing into a seeded four-arm spiral."
-      : mode.id === "milkyway"
-        ? "A playable reconstruction with the galactic bar, Sol, Orion Spur, and Perseus Arm marked."
-        : mode.id === "accretion"
-          ? "Let the planetesimal belt collide, merge, and grow the three colored planetary embryos."
-          : mode.id === "cometStorm"
-            ? "Icy visitors and rubble are converging on three inhabited inner worlds. Intercept or redirect them."
-            : "Gargantua bends its luminous accretion disk around the event horizon, with Miller, Mann, and Endurance nearby.";
-    return (
-      <section className="mode-card hud-panel pointer-events-auto absolute left-5 top-28 hidden w-72 p-4 lg:block">
-        <div className="flex items-center justify-between gap-3">
-          <p className="eyebrow">Cosmic mode</p>
-          <span className="font-mono text-xs tabular-nums text-muted">{galaxyStars > 0 ? `${galaxyStars} stars` : `${bodyCount} bodies`}</span>
-        </div>
-        <h2 className="mt-3 font-display text-xl italic text-fg">{mode.label}</h2>
-        <p className="mt-2 text-xs leading-relaxed text-muted">{detail}</p>
-        {mode.id === "galaxy" && (
-          <>
-            <progress className="mission-progress mt-4" value={galaxyFormation} max={1} aria-label={`${Math.round(galaxyFormation * 100)} percent formed`} />
-            <div className="mt-2 flex items-center justify-between">
-              <span className="font-mono text-xs tabular-nums text-muted">{Math.round(galaxyFormation * 100)}% formed</span>
-              <button type="button" className="text-xs font-medium text-fg underline decoration-subtle underline-offset-4" onClick={() => apiRef.current?.reformGalaxy()}>
-                Restart formation
-              </button>
-            </div>
-          </>
-        )}
-        {mode.id === "milkyway" && <p className="mt-4 font-mono text-[0.68rem] uppercase tracking-[0.14em] text-muted">Barred spiral · 4 principal arms</p>}
-        {mode.id === "gargantua" && <p className="mt-4 font-mono text-[0.68rem] uppercase tracking-[0.14em] text-muted">Photon ring · lensed rear disk</p>}
-      </section>
-    );
-  }
-  const items = [
-    ["Capture an orbit", captures > 0],
-    ["Thread the needle", closeCalls > 0],
-    ["Make contact", merges > 0],
-  ] as const;
-  const done = items.filter(([, complete]) => complete).length;
+const MODE_BRIEFS: Record<SceneId, string> = {
+  helios: "Build a lasting system. Aim along a tangent for a stable orbit.",
+  binary: "Thread a path around two moving suns without disturbing their dance.",
+  figure8: "Three worlds share one figure-eight. Find room for a fourth.",
+  slingshot: "Skim Atlas, borrow speed, then escape the system intact.",
+  horizon: "Surf the edge of the well. Get too close and tidal forces tear worlds apart.",
+  mayhem: "Counter-rotating worlds collide. Start a chain reaction or rescue a survivor.",
+  remix: "A new seeded system each time. Discover its stable paths.",
+  galaxy:
+    "Twelve live stellar clusters orbit the core. Launch visitors, open wormholes, and reshape their paths.",
+  milkyway:
+    "The Sun and all eight planets. Explore their orbits or launch a visitor into the system.",
+  accretion: "Guide rubble into planetary embryos. Grow worlds with gentle collisions.",
+  cometStorm:
+    "Protect the three inner worlds. Stronger comet waves arrive every 18 simulated seconds.",
+  gargantua: "Skim the photon ring. Rescue a world with a wormhole before it is torn apart.",
+  empty: "Start with nothing. Build your own suns, planets and orbital architecture.",
+};
+
+function MissionCard({ apiRef }: { apiRef: MutableRefObject<SimApi | null> }) {
+  const state = useSimUi();
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    const desktop = window.matchMedia("(min-width: 1024px)");
+    const sync = () => setExpanded(desktop.matches);
+    sync();
+    desktop.addEventListener("change", sync);
+    return () => desktop.removeEventListener("change", sync);
+  }, []);
+  const activeContract = contractById(state.activeContractId);
+  const label =
+    COSMIC_MODES.find((m) => m.id === state.sceneId)?.label ??
+    SCENES.find((m) => m.id === state.sceneId)?.label ??
+    "Field";
+  const goals = fieldGoals(state);
+  const done = state.objectivesComplete ? 3 : goals.filter((g) => g.value >= g.target).length;
   return (
-    <section className="hud-panel pointer-events-auto absolute left-5 top-28 hidden w-64 p-4 lg:block">
-      <div className="flex items-center justify-between">
-        <p className="eyebrow">Field notes</p>
-        <span className="font-mono text-xs tabular-nums text-muted">{done}/3</span>
+    <section
+      className={cn(
+        "mission-card hud-panel pointer-events-auto",
+        expanded && "mission-card-expanded",
+      )}
+      aria-label="Mode and objectives"
+    >
+      <button
+        type="button"
+        className="mission-heading"
+        aria-expanded={expanded}
+        onClick={() => setExpanded(!expanded)}
+      >
+        <span className="text-sm font-semibold">
+          {activeContract ? activeContract.title : label}
+        </span>
+        <span className="text-xs text-muted">
+          {activeContract
+            ? state.contractStatus
+            : state.challengingTasks
+              ? `${done}/3`
+              : "Free play"}
+        </span>
+        <ChevronDown className="mission-chevron size-4" />
+      </button>
+      <div className="mission-content">
+        <p className="text-sm leading-relaxed text-muted">
+          {activeContract ? activeContract.objective : MODE_BRIEFS[state.sceneId]}
+        </p>
+        {state.sceneId === "milkyway" && (
+          <p className="mt-2 text-xs text-muted">
+            Solar System within the Milky Way · real mass ratios · scaled distances, sizes and time
+          </p>
+        )}
+        {state.sceneId === "cometStorm" && (
+          <p className="mt-3 font-mono text-xs text-fg">
+            Wave {Math.floor(state.worldTime / 18) + 1} · next in{" "}
+            {Math.ceil(18 - (state.worldTime % 18))}s
+          </p>
+        )}
+        {activeContract ? (
+          <progress
+            className="mission-progress mt-3"
+            value={state.contractProgress}
+            max={activeContract.target}
+            aria-label="Contract progress"
+          />
+        ) : (
+          state.challengingTasks && (
+            <div className="mt-4 space-y-3">
+              {goals.map((goal) => (
+                <div key={goal.label}>
+                  <div className="flex items-start justify-between gap-3 text-sm">
+                    <span
+                      className={
+                        goal.value >= goal.target || state.objectivesComplete
+                          ? "text-muted"
+                          : "text-fg"
+                      }
+                    >
+                      {goal.label}
+                    </span>
+                    <span className="shrink-0 font-mono text-xs text-muted">
+                      {Math.min(goal.target, Math.floor(goal.value))}/{goal.target}
+                    </span>
+                  </div>
+                  <progress
+                    className="mission-progress mt-1.5"
+                    value={
+                      state.objectivesComplete ? goal.target : Math.min(goal.target, goal.value)
+                    }
+                    max={goal.target}
+                    aria-label={goal.label}
+                  />
+                </div>
+              ))}
+            </div>
+          )
+        )}
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="body-category"
+            aria-pressed={state.challengingTasks}
+            onClick={state.toggleChallengingTasks}
+          >
+            Challenges {state.challengingTasks ? "on" : "off"}
+          </button>
+          <button
+            type="button"
+            className="body-category"
+            onClick={() =>
+              activeContract
+                ? apiRef.current?.startContract(activeContract.id)
+                : apiRef.current?.loadScene(state.sceneId)
+            }
+          >
+            Restart
+          </button>
+        </div>
       </div>
-      <div className="mt-3 space-y-2.5">
-        {items.map(([label, complete]) => (
-          <div key={label} className="flex items-center gap-2.5 text-sm">
-            <span className={cn("flex size-5 items-center justify-center rounded-full border", complete ? "border-accent bg-accent text-bg" : "border-subtle text-transparent")}>
-              <Check className="size-3" />
-            </span>
-            <span className={complete ? "text-muted line-through decoration-subtle" : "text-fg"}>{label}</span>
-          </div>
-        ))}
-      </div>
-      <progress className="mission-progress mt-4" value={done} max={3} aria-label={`${done} of 3 field notes complete`} />
     </section>
   );
 }
@@ -527,8 +674,17 @@ function DiscoveryToast({ toast }: { toast: DiscoveryToastType }) {
     return () => window.clearTimeout(timer);
   }, [toast.createdAt]);
   return (
-    <div className={cn("pointer-events-none absolute left-3 right-3 top-36 z-40 transition-[opacity,transform] duration-150 sm:left-1/2 sm:right-auto sm:top-5 sm:w-96 sm:-translate-x-1/2", visible ? "opacity-100" : "-translate-y-2 opacity-0")}>
-      <div className="discovery-toast flex items-center gap-3 rounded-xl border border-border bg-surface/95 px-4 py-3 shadow-panel backdrop-blur-sm">
+    <div
+      className={cn(
+        "discovery-notice pointer-events-none absolute right-3 top-40 z-40 w-64 max-w-[calc(100%-1.5rem)] transition-[opacity,transform] duration-150 sm:right-5 sm:top-28 sm:w-72",
+        visible ? "opacity-100" : "-translate-y-2 opacity-0",
+      )}
+    >
+      <div
+        role="status"
+        aria-live="polite"
+        className="discovery-toast flex items-center gap-3 rounded-xl border border-border bg-surface/95 px-4 py-3 shadow-panel backdrop-blur-sm"
+      >
         <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent text-bg">
           <Orbit className="size-4" />
         </span>
@@ -537,7 +693,9 @@ function DiscoveryToast({ toast }: { toast: DiscoveryToastType }) {
           <p className="truncate text-xs text-muted">{toast.detail}</p>
         </div>
         <div className="text-right">
-          <p className="font-mono text-sm tabular-nums text-fg">+{toast.points}</p>
+          {toast.points > 0 && (
+            <p className="font-mono text-sm tabular-nums text-fg">+{toast.points}</p>
+          )}
           {toast.streak > 1 && <p className="text-xs text-muted">{toast.streak}× streak</p>}
         </div>
       </div>
@@ -545,29 +703,78 @@ function DiscoveryToast({ toast }: { toast: DiscoveryToastType }) {
   );
 }
 
-function IconButton({ label, onClick, badge, children }: { label: string; onClick: () => void; badge?: boolean; children: ReactNode }) {
+function IconButton({
+  label,
+  onClick,
+  badge,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  badge?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <button type="button" onClick={onClick} aria-label={label} title={label} className="icon-button relative">
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="icon-button relative"
+    >
       {children}
       {badge && <span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-accent" />}
     </button>
   );
 }
 
-function IconToggle({ pressed, onClick, label, children }: { pressed: boolean; onClick: () => void; label: string; children: ReactNode }) {
+function IconToggle({
+  pressed,
+  onClick,
+  label,
+  children,
+}: {
+  pressed: boolean;
+  onClick: () => void;
+  label: string;
+  children: ReactNode;
+}) {
   return (
-    <button type="button" aria-pressed={pressed} aria-label={label} title={label} onClick={onClick} className={cn("tool-button", pressed && "tool-button-selected")}>
+    <button
+      type="button"
+      aria-pressed={pressed}
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className={cn("tool-button", pressed && "tool-button-selected")}
+    >
       {children}
-      <span className="hidden xl:inline">{label}</span>
+      <span className="control-label">{label}</span>
     </button>
   );
 }
 
-function ToolButton({ onClick, label, danger = false, children }: { onClick: () => void; label: string; danger?: boolean; children: ReactNode }) {
+function ToolButton({
+  onClick,
+  label,
+  danger = false,
+  children,
+}: {
+  onClick: () => void;
+  label: string;
+  danger?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <button type="button" aria-label={label} title={label} onClick={onClick} className={cn("tool-button", danger && "hover:text-danger")}>
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className={cn("tool-button", danger && "hover:text-danger")}
+    >
       {children}
-      <span className="hidden xl:inline">{label}</span>
+      <span className="control-label">{label}</span>
     </button>
   );
 }

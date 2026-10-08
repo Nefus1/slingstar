@@ -1,15 +1,9 @@
+import { fieldGoals } from "./challenges";
 import { create } from "zustand";
 import { contractById, type ContractId, type ContractMetric } from "./contracts";
 import { discoveryTone, setAudioEnabled } from "./audio";
 import { loadProfile, saveProfile } from "./progress";
-import type {
-  BodyKind,
-  BodySummary,
-  InstrumentId,
-  MassId,
-  SceneId,
-  TimelineEvent,
-} from "./types";
+import type { BodyKind, BodySummary, InstrumentId, MassId, SceneId, TimelineEvent } from "./types";
 
 export type DiscoveryKind =
   | "capture"
@@ -34,7 +28,10 @@ export type DiscoveryToast = {
 
 type ScoreCategory = "efficiency" | "stability" | "rarity" | "style";
 
-const DISCOVERIES: Record<DiscoveryKind, { title: string; points: number; category: ScoreCategory }> = {
+const DISCOVERIES: Record<
+  DiscoveryKind,
+  { title: string; points: number; category: ScoreCategory }
+> = {
   capture: { title: "Orbit captured", points: 260, category: "efficiency" },
   closeCall: { title: "Close shave", points: 180, category: "style" },
   collision: { title: "Worlds merged", points: 140, category: "style" },
@@ -86,6 +83,9 @@ type SimUi = {
   hudHidden: boolean;
   sound: boolean;
   shake: boolean;
+  challengingTasks: boolean;
+  notifiedDiscoveries: string[];
+  lastNotificationAt: number;
   hydrated: boolean;
   score: number;
   bestScore: number;
@@ -133,6 +133,7 @@ type SimUi = {
   toggleHud: () => void;
   toggleSound: () => void;
   toggleShake: () => void;
+  toggleChallengingTasks: () => void;
   hydrateProfile: () => void;
   recordLaunch: (kind: BodyKind) => void;
   recordDiscovery: (kind: DiscoveryKind, detail: string) => void;
@@ -169,18 +170,30 @@ const freshSession = {
 
 function metricValue(state: SimUi, metric: ContractMetric) {
   switch (metric) {
-    case "capture": return state.captures;
-    case "closeCall": return state.closeCalls;
-    case "collision": return state.merges;
-    case "slingshot": return state.slingshots;
-    case "singularity": return state.blackHoles;
-    case "system": return state.systemMilestone ? 1 : 0;
-    case "wormhole": return state.wormholes;
-    case "fragment": return state.fragments;
-    case "nova": return state.novaPulses;
-    case "orbit": return state.orbits;
-    case "bodyCount": return state.bodyCount;
-    case "time": return Math.max(0, state.worldTime - state.contractStartedAt);
+    case "capture":
+      return state.captures;
+    case "closeCall":
+      return state.closeCalls;
+    case "collision":
+      return state.merges;
+    case "slingshot":
+      return state.slingshots;
+    case "singularity":
+      return state.blackHoles;
+    case "system":
+      return state.systemMilestone ? 1 : 0;
+    case "wormhole":
+      return state.wormholes;
+    case "fragment":
+      return state.fragments;
+    case "nova":
+      return state.novaPulses;
+    case "orbit":
+      return state.orbits;
+    case "bodyCount":
+      return state.bodyCount;
+    case "time":
+      return Math.max(0, state.worldTime - state.contractStartedAt);
   }
 }
 
@@ -192,6 +205,8 @@ export const useSimUi = create<SimUi>((set, get) => {
       totalDiscoveries: state.totalDiscoveries,
       sound: state.sound,
       shake: state.shake,
+      challengingTasks: state.challengingTasks,
+      notifiedDiscoveries: state.notifiedDiscoveries,
       completedContracts: state.completedContracts,
     });
   };
@@ -199,6 +214,7 @@ export const useSimUi = create<SimUi>((set, get) => {
   const announce = (title: string, detail: string, points = 0, streak = 1) => {
     const current = get();
     set({
+      lastNotificationAt: Date.now(),
       lastDiscovery: {
         id: (current.lastDiscovery?.id ?? 0) + 1,
         createdAt: Date.now(),
@@ -231,7 +247,8 @@ export const useSimUi = create<SimUi>((set, get) => {
     const completedContracts = state.completedContracts.includes(contract.id)
       ? state.completedContracts
       : [...state.completedContracts, contract.id];
-    const bonus = 1200 + completedContracts.length * 180;
+    const firstCompletion = !state.completedContracts.includes(contract.id);
+    const bonus = firstCompletion ? 1200 + completedContracts.length * 180 : 0;
     const score = state.score + bonus;
     set({
       contractStatus: "complete",
@@ -241,8 +258,30 @@ export const useSimUi = create<SimUi>((set, get) => {
       bestScore: Math.max(state.bestScore, score),
       stabilityScore: state.stabilityScore + bonus,
     });
-    announce("Contract complete", `${contract.title} · ${contract.reward} calibrated.`, bonus, 1);
-    discoveryTone(true);
+    if (firstCompletion) {
+      announce("Contract complete", `${contract.title} · ${contract.reward} calibrated.`, bonus, 1);
+      discoveryTone(true);
+    }
+    persist();
+  };
+
+  const evaluateChallenges = () => {
+    const state = get();
+    if (!state.challengingTasks || state.objectivesComplete || state.activeContractId) return;
+    if (!fieldGoals(state).every((goal) => goal.value >= goal.target)) return;
+    const score = state.score + 1500;
+    set({
+      objectivesComplete: true,
+      score,
+      bestScore: Math.max(state.bestScore, score),
+      stabilityScore: state.stabilityScore + 1500,
+    });
+    const id = `challenge:${state.sceneId}`;
+    if (!state.notifiedDiscoveries.includes(id)) {
+      set({ notifiedDiscoveries: [...state.notifiedDiscoveries, id] });
+      announce("Challenge complete", "All three field objectives achieved.", 1500);
+      discoveryTone(true);
+    }
     persist();
   };
 
@@ -271,6 +310,9 @@ export const useSimUi = create<SimUi>((set, get) => {
     hudHidden: false,
     sound: true,
     shake: true,
+    challengingTasks: true,
+    notifiedDiscoveries: [],
+    lastNotificationAt: 0,
     hydrated: false,
     bestScore: 0,
     totalDiscoveries: 0,
@@ -282,18 +324,29 @@ export const useSimUi = create<SimUi>((set, get) => {
     rewindsUsed: 0,
     ...freshSession,
     setMassId: (id) => set({ massId: id, instrument: "launch", multiLaunch: false }),
-    toggleMultiMassId: (id) => set((state) => {
-      const selected = state.multiMassIds.includes(id);
-      if (selected && state.multiMassIds.length === 1) return state;
-      return {
-        multiMassIds: selected
-          ? state.multiMassIds.filter((candidate) => candidate !== id)
-          : [...state.multiMassIds, id],
-      };
-    }),
-    toggleMultiLaunch: () => set((state) => ({ multiLaunch: !state.multiLaunch, instrument: "launch" })),
+    toggleMultiMassId: (id) =>
+      set((state) => {
+        const selected = state.multiMassIds.includes(id);
+        if (selected && state.multiMassIds.length === 1) return state;
+        return {
+          multiMassIds: selected
+            ? state.multiMassIds.filter((candidate) => candidate !== id)
+            : [...state.multiMassIds, id],
+        };
+      }),
+    toggleMultiLaunch: () =>
+      set((state) => ({ multiLaunch: !state.multiLaunch, instrument: "launch" })),
     setInstrument: (id) => set({ instrument: id }),
-    setScene: (id, seed) => set({ sceneId: id, seed }),
+    setScene: (id, seed) =>
+      set({
+        ...freshSession,
+        sceneId: id,
+        seed,
+        activeContractId: null,
+        contractStatus: "idle",
+        contractProgress: 0,
+        rewindsUsed: 0,
+      }),
     setTimeScale: (n) => set({ timeScale: n }),
     toggleTrails: () => set((state) => ({ trails: !state.trails })),
     toggleFieldWorlds: () => set((state) => ({ fieldWorlds: !state.fieldWorlds })),
@@ -308,6 +361,7 @@ export const useSimUi = create<SimUi>((set, get) => {
     syncWorld: (telemetry) => {
       set(telemetry);
       evaluateContract();
+      evaluateChallenges();
     },
     setReportOpen: (reportOpen) => set({ reportOpen }),
     toggleHud: () => set((state) => ({ hudHidden: !state.hudHidden })),
@@ -321,6 +375,10 @@ export const useSimUi = create<SimUi>((set, get) => {
       set((state) => ({ shake: !state.shake }));
       persist();
     },
+    toggleChallengingTasks: () => {
+      set((state) => ({ challengingTasks: !state.challengingTasks }));
+      persist();
+    },
     hydrateProfile: () => {
       if (get().hydrated) return;
       const profile = loadProfile();
@@ -330,6 +388,8 @@ export const useSimUi = create<SimUi>((set, get) => {
         totalDiscoveries: profile.totalDiscoveries,
         sound: profile.sound,
         shake: profile.shake,
+        challengingTasks: profile.challengingTasks,
+        notifiedDiscoveries: profile.notifiedDiscoveries,
         completedContracts: profile.completedContracts,
       });
       setAudioEnabled(profile.sound);
@@ -359,15 +419,12 @@ export const useSimUi = create<SimUi>((set, get) => {
       const fragments = current.fragments + (kind === "fragment" ? 1 : 0);
       const novaPulses = current.novaPulses + (kind === "nova" ? 1 : 0);
       const orbits = current.orbits + (kind === "orbit" ? 1 : 0);
-      const completed = captures > 0 && closeCalls > 0 && merges > 0;
-      const completionBonus = completed && !current.objectivesComplete ? 1000 : 0;
-      const points = config.points * streak + completionBonus;
+      const notify =
+        !current.notifiedDiscoveries.includes(kind) && now - current.lastNotificationAt >= 10000;
+      const points = config.points * streak;
       const score = current.score + points;
       const categoryKey = `${config.category}Score` as
-        | "efficiencyScore"
-        | "stabilityScore"
-        | "rarityScore"
-        | "styleScore";
+        "efficiencyScore" | "stabilityScore" | "rarityScore" | "styleScore";
       set({
         captures,
         closeCalls,
@@ -377,28 +434,34 @@ export const useSimUi = create<SimUi>((set, get) => {
         fragments,
         novaPulses,
         orbits,
-        objectivesComplete: completed,
         score,
         bestScore: Math.max(current.bestScore, score),
         [categoryKey]: current[categoryKey] + points,
         streak,
         lastEventAt: now,
-        lastDiscovery: {
-          id: (current.lastDiscovery?.id ?? 0) + 1,
-          createdAt: now,
-          title: completionBonus > 0 ? "Field notes complete" : config.title,
-          detail: completionBonus > 0 ? "Capture, close shave, and collision recorded." : detail,
-          points,
-          streak,
-        },
+        ...(notify
+          ? {
+              lastNotificationAt: now,
+              notifiedDiscoveries: [...current.notifiedDiscoveries, kind],
+              lastDiscovery: {
+                id: (current.lastDiscovery?.id ?? 0) + 1,
+                createdAt: now,
+                title: config.title,
+                detail,
+                points,
+                streak,
+              },
+            }
+          : {}),
         totalDiscoveries: current.totalDiscoveries + 1,
       });
-      discoveryTone(completionBonus > 0);
+      if (notify && kind !== "collision" && kind !== "orbit") discoveryTone();
       evaluateContract();
+      evaluateChallenges();
       persist();
     },
     markSystemMilestone: () => {
-      if (get().systemMilestone) return;
+      if (get().systemMilestone || get().launches < 3) return;
       set({ systemMilestone: true });
       get().recordDiscovery("system", "Twelve bodies are sharing one sky.");
     },
@@ -417,12 +480,13 @@ export const useSimUi = create<SimUi>((set, get) => {
       const contract = contractById(id);
       if (contract) announce(`Contract ${contract.number}`, contract.objective);
     },
-    abandonContract: () => set({
-      activeContractId: null,
-      contractStatus: "idle",
-      contractProgress: 0,
-      rewindsUsed: 0,
-    }),
+    abandonContract: () =>
+      set({
+        activeContractId: null,
+        contractStatus: "idle",
+        contractProgress: 0,
+        rewindsUsed: 0,
+      }),
     consumeRewind: () => {
       const state = get();
       if (state.contractStatus === "active" && state.rewindsUsed >= 2) {
@@ -432,12 +496,13 @@ export const useSimUi = create<SimUi>((set, get) => {
       if (state.contractStatus === "active") set({ rewindsUsed: state.rewindsUsed + 1 });
       return true;
     },
-    resetFieldNotes: () => set({
-      ...freshSession,
-      activeContractId: null,
-      contractStatus: "idle",
-      contractProgress: 0,
-      rewindsUsed: 0,
-    }),
+    resetFieldNotes: () =>
+      set({
+        ...freshSession,
+        activeContractId: null,
+        contractStatus: "idle",
+        contractProgress: 0,
+        rewindsUsed: 0,
+      }),
   };
 });

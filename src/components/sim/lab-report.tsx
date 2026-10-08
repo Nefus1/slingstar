@@ -43,6 +43,8 @@ export function LabReport({ apiRef }: { apiRef: MutableRefObject<SimApi | null> 
   const novaPulses = useSimUi((state) => state.novaPulses);
   const sound = useSimUi((state) => state.sound);
   const shake = useSimUi((state) => state.shake);
+  const challengingTasks = useSimUi(state => state.challengingTasks);
+  const toggleChallengingTasks = useSimUi(state => state.toggleChallengingTasks);
   const seed = useSimUi((state) => state.seed);
   const worldTime = useSimUi((state) => state.worldTime);
   const rewindSeconds = useSimUi((state) => state.rewindSeconds);
@@ -177,11 +179,12 @@ export function LabReport({ apiRef }: { apiRef: MutableRefObject<SimApi | null> 
 
               <section className="mt-6">
                 <p className="eyebrow mb-3">Comfort</p>
+                <button type="button" className="secondary-button mb-2" aria-pressed={challengingTasks} onClick={toggleChallengingTasks}>Challenges {challengingTasks ? "on" : "off"}</button>
                 <div className="flex gap-2">
                   <SettingButton pressed={sound} onClick={toggleSound} label="Sound">
                     {sound ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
                   </SettingButton>
-                  <SettingButton pressed={shake} onClick={toggleShake} label="Impact shake">
+                  <SettingButton pressed={shake} onClick={toggleShake} label="Major-event shake">
                     <Waves className="size-4" />
                   </SettingButton>
                 </div>
